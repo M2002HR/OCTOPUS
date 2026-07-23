@@ -59,6 +59,25 @@ class AuditStore:
             "CREATE INDEX IF NOT EXISTS idx_conversation_turns_call "
             "ON conversation_turns(call_id, occurred_at)"
         )
+        self.connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_turns (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              occurred_at REAL NOT NULL,
+              trace_id TEXT NOT NULL UNIQUE,
+              conversation_id TEXT NOT NULL,
+              input_kind TEXT NOT NULL,
+              input_text TEXT NOT NULL,
+              reply TEXT NOT NULL,
+              response_mode TEXT NOT NULL,
+              media_asset_id TEXT
+            )
+            """
+        )
+        self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_message_turns_conversation "
+            "ON message_turns(conversation_id, occurred_at)"
+        )
         self.connection.commit()
         self.jsonl = JsonlEventWriter(jsonl_path)
 
@@ -133,6 +152,38 @@ class AuditStore:
             (call_id,),
         ).fetchall()
         return [(str(transcript), str(reply)) for transcript, reply in rows]
+
+    def record_message_turn(
+        self,
+        *,
+        occurred_at: float,
+        trace_id: str,
+        conversation_id: str,
+        input_kind: str,
+        input_text: str,
+        reply: str,
+        response_mode: str,
+        media_asset_id: str | None,
+    ) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO message_turns(
+              occurred_at, trace_id, conversation_id, input_kind, input_text,
+              reply, response_mode, media_asset_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                occurred_at,
+                trace_id,
+                conversation_id,
+                input_kind,
+                input_text,
+                reply,
+                response_mode,
+                media_asset_id,
+            ),
+        )
+        self.connection.commit()
 
     def close(self) -> None:
         self.connection.close()

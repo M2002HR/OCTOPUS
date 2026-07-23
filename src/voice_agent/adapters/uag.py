@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import mimetypes
 from collections.abc import Sequence
 from pathlib import Path
@@ -76,12 +77,33 @@ class UAGClient:
         return text
 
     async def reply(self, *, messages: Sequence[ChatMessage], system_prompt: str) -> str:
+        payload_messages: list[dict[str, object]] = [{"role": "system", "content": system_prompt}]
+        payload_messages.extend({"role": item.role, "content": item.content} for item in messages)
+        return await self._reply_with_payload(payload_messages)
+
+    async def reply_with_image(
+        self,
+        *,
+        messages: Sequence[ChatMessage],
+        system_prompt: str,
+        image_path: Path,
+        prompt: str,
+    ) -> str:
+        mime_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+        encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+        content: list[dict[str, object]] = [
+            {"type": "text", "text": prompt or "Describe this image and answer the user."},
+            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}},
+        ]
+        payload_messages: list[dict[str, object]] = [{"role": "system", "content": system_prompt}]
+        payload_messages.extend({"role": item.role, "content": item.content} for item in messages)
+        payload_messages.append({"role": "user", "content": content})
+        return await self._reply_with_payload(payload_messages)
+
+    async def _reply_with_payload(self, messages: list[dict[str, object]]) -> str:
         payload: dict[str, Any] = {
             "model": ",".join(self.models),
-            "messages": (
-                [{"role": "system", "content": system_prompt}]
-                + [{"role": item.role, "content": item.content} for item in messages]
-            ),
+            "messages": messages,
             "stream": False,
         }
         if self.providers:

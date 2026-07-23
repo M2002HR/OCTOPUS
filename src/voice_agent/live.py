@@ -11,6 +11,7 @@ from voice_agent.adapters.uag import UAGClient
 from voice_agent.application import ConversationOrchestrator
 from voice_agent.config import Settings
 from voice_agent.domain import AudioTurn, Call, CallState
+from voice_agent.messaging import MessageAssistant
 from voice_agent.observability import Event
 from voice_agent.storage import AuditStore
 from voice_agent.voip import IncomingCallServer, TelethonVoipEngine
@@ -51,6 +52,7 @@ class LiveVoiceAssistant:
         )
         self.engine: TelethonVoipEngine | None = None
         self.inbound_server: IncomingCallServer | None = None
+        self.message_assistant: MessageAssistant | None = None
         self.call: Call | None = None
         self.inbound_peer_id: int | None = None
         self.inbound_peer_username: str | None = None
@@ -147,6 +149,17 @@ class LiveVoiceAssistant:
             on_call_ended=self._finish_incoming_call,
         )
         await self.inbound_server.start()
+        if self.settings.message_enabled:
+            message_peer = await self.telegram.resolve_allowed_user(self.settings.message_username)
+            self.message_assistant = MessageAssistant(
+                settings=self.settings,
+                client=self.telegram.client,
+                uag=self.uag,
+                synthesizer=self.orchestrator.synthesizer,
+                audit=self.audit,
+                allowed_peer_id=message_peer.user_id,
+            )
+            await self.message_assistant.start()
         logger.info("inbound voice service is ready for the configured caller")
 
     async def _accept_incoming_call(self, peer_id: int, _: object) -> None:
@@ -246,6 +259,8 @@ class LiveVoiceAssistant:
         }:
             self.call.transition(CallState.ENDED)
         try:
+            if self.message_assistant is not None:
+                await self.message_assistant.stop()
             if self.inbound_server is not None:
                 await self.inbound_server.stop()
             if self.engine is not None:

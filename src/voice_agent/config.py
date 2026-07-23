@@ -34,6 +34,12 @@ def _csv_int(name: str) -> frozenset[int]:
         raise ConfigurationError(f"{name} must be a comma-separated list of numeric IDs") from exc
 
 
+def _runtime_path(name: str, default: str, runtime: Path) -> Path:
+    """Resolve relative runtime settings inside the configured runtime volume."""
+    path = Path(os.getenv(name, default))
+    return path if path.is_absolute() else runtime / path
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     runtime_dir: Path
@@ -81,6 +87,13 @@ class Settings:
     telegram_proxy_username: str
     telegram_proxy_password: str
     telegram_proxy_rdns: bool
+    message_enabled: bool
+    message_username: str
+    message_default_response: str
+    message_max_media_bytes: int
+    message_media_library_dir: Path
+    message_media_manifest: Path
+    message_vision_enabled: bool
 
     @classmethod
     def load(cls, env_file: Path | None = None) -> Settings:
@@ -93,9 +106,7 @@ class Settings:
         events = Path(os.getenv("AUDIT_JSONL_PATH", str(runtime / "events.jsonl")))
         recording_mode = os.getenv("VOICE_AGENT_RECORDING_MODE", "transcript_only").strip()
         if recording_mode not in {"off", "transcript_only"}:
-            raise ConfigurationError(
-                "VOICE_AGENT_RECORDING_MODE must be off or transcript_only"
-            )
+            raise ConfigurationError("VOICE_AGENT_RECORDING_MODE must be off or transcript_only")
         vad_start_rms = _int("VOICE_AGENT_VAD_START_RMS", 350, minimum=1)
         vad_continue_rms = _int("VOICE_AGENT_VAD_CONTINUE_RMS", 240, minimum=1)
         if vad_continue_rms > vad_start_rms:
@@ -163,6 +174,24 @@ class Settings:
             telegram_proxy_username=os.getenv("TELEGRAM_PROXY_USERNAME", "").strip(),
             telegram_proxy_password=os.getenv("TELEGRAM_PROXY_PASSWORD", "").strip(),
             telegram_proxy_rdns=_bool("TELEGRAM_PROXY_RDNS", True),
+            message_enabled=_bool("VOICE_AGENT_MESSAGE_ENABLED", True),
+            message_username=os.getenv(
+                "VOICE_AGENT_MESSAGE_USERNAME",
+                os.getenv("VOICE_AGENT_INBOUND_USERNAME", ""),
+            ).strip(),
+            message_default_response=os.getenv("VOICE_AGENT_MESSAGE_DEFAULT_RESPONSE", "voice")
+            .strip()
+            .casefold(),
+            message_max_media_bytes=_int(
+                "VOICE_AGENT_MESSAGE_MAX_MEDIA_BYTES", 12 * 1024 * 1024, minimum=1
+            ),
+            message_media_library_dir=_runtime_path(
+                "VOICE_AGENT_MESSAGE_MEDIA_LIBRARY_DIR", "media-library", runtime
+            ),
+            message_media_manifest=_runtime_path(
+                "VOICE_AGENT_MESSAGE_MEDIA_MANIFEST", "media-library/manifest.json", runtime
+            ),
+            message_vision_enabled=_bool("VOICE_AGENT_MESSAGE_VISION_ENABLED", True),
         )
 
     def validate_telegram(self) -> None:
@@ -184,3 +213,9 @@ class Settings:
             raise ConfigurationError("VOICE_AGENT_INBOUND_ENABLED must be true for serve mode")
         if not self.inbound_username:
             raise ConfigurationError("VOICE_AGENT_INBOUND_USERNAME is required for serve mode")
+        if self.message_default_response not in {"voice", "text"}:
+            raise ConfigurationError("VOICE_AGENT_MESSAGE_DEFAULT_RESPONSE must be voice or text")
+        if self.message_enabled and not self.message_username:
+            raise ConfigurationError(
+                "VOICE_AGENT_MESSAGE_USERNAME is required when message service is enabled"
+            )
