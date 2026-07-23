@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telegram-voice-agent"
+version = "0.1.0"
+description = "Auditable modular Telegram voice assistant"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27,<1",
+  "python-dotenv>=1.0,<2",
+  "telethon>=1.44,<2",
+  "pysocks>=1.7,<2",
+  "python-socks[asyncio]>=2.5,<3",
+  "py-tgcalls[telethon]>=2.3,<3",
+  "edge-tts>=7,<8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "pytest-asyncio>=0.23,<1", "ruff>=0.8", "mypy>=1.13"]
+
+[project.scripts]
+telegram-voice-agent = "voice_agent.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["voice_agent"]
+
+[[tool.mypy.overrides]]
+module = ["telethon.*", "pytgcalls.*", "ntgcalls"]
+ignore_missing_imports = true

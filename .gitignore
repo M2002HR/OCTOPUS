@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tools/
+runtime/
+data/
+*.session
+*.session-journal
+*.db
+vendor/Ajil_Unified_AI_Gateway/.env

@@ -1,0 +1,58 @@
+services:
+  uag-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  uag-gateway:
+    build:
+      context: ./vendor/Ajil_Unified_AI_Gateway
+      dockerfile: Dockerfile
+      network: ${UAG_DOCKER_BUILD_NETWORK:-default}
+      args:
+        HTTP_PROXY: ${UAG_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${UAG_BUILD_HTTPS_PROXY:-}
+        ALL_PROXY: ${UAG_BUILD_ALL_PROXY:-}
+        NO_PROXY: ${UAG_BUILD_NO_PROXY:-}
+        PIP_INDEX_URL: ${UAG_PIP_INDEX_URL:-}
+        PIP_EXTRA_INDEX_URL: ${UAG_PIP_EXTRA_INDEX_URL:-}
+    env_file: .env
+    environment:
+      UAG_ENV_FILE: /dev/null
+      UAG_REDIS_URL: redis://uag-redis:6379/0
+      # The root .env may use a host-loopback proxy for bare-metal runs; use
+      # its Docker-specific endpoint when the gateway runs in this network.
+      UAG_PROXY_URL: ${UAG_PROXY_URL_DOCKER:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      uag-redis:
+        condition: service_healthy
+    ports:
+      - "${VOICE_AGENT_UAG_PORT:-18081}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  voice-agent:
+    build: .
+    profiles: ["agent"]
+    env_file: .env
+    environment:
+      UAG_BASE_URL: http://uag-gateway:8080
+      RUNTIME_DIR: /runtime
+      AUDIT_DATABASE_PATH: /runtime/voice_agent.sqlite3
+      AUDIT_JSONL_PATH: /runtime/events.jsonl
+    volumes:
+      - ./runtime:/runtime
+    depends_on:
+      uag-gateway:
+        condition: service_healthy
+    command: ["--help"]
