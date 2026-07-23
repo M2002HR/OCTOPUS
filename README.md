@@ -28,12 +28,14 @@ UAG_BASE_URL=http://127.0.0.1:18081 \
   .venv/bin/telegram-voice-agent process-file runtime/verification/edge-smoke.ogg --language fa
 ```
 
-To place a real test call, the target must already be in `VOICE_AGENT_ALLOWED_PEER_IDS` and
-the command must be explicitly run:
+To run the persistent inbound assistant, set `VOICE_AGENT_INBOUND_ENABLED=true`, set
+`VOICE_AGENT_INBOUND_USERNAME`, and ensure its resolved numeric ID is in
+`VOICE_AGENT_ALLOWED_PEER_IDS`. The username is resolved once at startup; every other caller is
+rejected.
 
 ```bash
-UAG_BASE_URL=http://127.0.0.1:18081 \
-  .venv/bin/telegram-voice-agent call --username "$VOICE_AGENT_TEST_PEER_USERNAME"
+docker compose --profile agent up -d voice-agent
+docker compose logs -f voice-agent
 ```
 
 Read [docs/README.md](docs/README.md) before running a live call. It contains the architecture,

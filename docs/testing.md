@@ -29,24 +29,25 @@ UAG_BASE_URL=http://127.0.0.1:18081 \
 Success means the command prints a generated reply and an Ogg/Opus path. Inspect the recent
 content-free events with `tail -f runtime/events.jsonl` and query SQLite only when authorized.
 
-## Manual live-call test
+## Manual inbound live-call test
 
 1. Confirm the test peer’s numeric ID is in `VOICE_AGENT_ALLOWED_PEER_IDS`.
 2. Stop every other process/container using the same `TELEGRAM_STRING_SESSION`; do not delete
    its session.
 3. Ensure the test peer has consented and will answer.
 4. In one terminal, tail events: `tail -f runtime/events.jsonl`.
-5. In another, run:
+5. Start the persistent server:
 
    ```bash
-   UAG_BASE_URL=http://127.0.0.1:18081 \
-     .venv/bin/telegram-voice-agent call --username "$VOICE_AGENT_TEST_PEER_USERNAME"
+   docker compose --profile agent up -d voice-agent
+   docker compose logs -f voice-agent
    ```
 
-6. Speak a short sentence, a sentence with a natural mid-sentence pause, and a quiet sentence.
+6. From the configured inbound username, call the agent account. A different Telegram account must
+   be declined. Speak a short sentence, a sentence with a natural mid-sentence pause, and a quiet sentence.
    Confirm one answer arrives after each completed turn, without lost initial syllables.
-7. Stop with `Ctrl-C`; verify `voip.hangup` and call cleanup events, then restore any paused
-   service that used the session.
+7. Stop with `docker compose --profile agent stop voice-agent`; verify `voip.hangup` and call
+   cleanup events, then restore any paused service that used the session.
 
 Do not call arbitrary usernames as a test. The numeric allowlist is intentionally enforced before
 Telegram call setup.

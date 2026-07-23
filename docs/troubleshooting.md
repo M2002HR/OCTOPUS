@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | Missing Telegram configuration | `ConfigurationError` before connection | Set API ID, API hash, and string session in the root `.env`. |
 | Proxy configuration failure | error mentions proxy host/port | If the proxy is enabled, provide both a host and a positive port. |
+| Container cannot reach `127.0.0.1` proxy | Telethon retries a loopback proxy connection | Set `TELEGRAM_PROXY_HOST_DOCKER` and `TELEGRAM_PROXY_PORT_DOCKER` to the endpoint exposed to Docker; `127.0.0.1` inside a container is not the host. |
 | VAD configuration failure | error mentions `CONTINUE_RMS` | Keep continuation RMS less than or equal to start RMS. |
 | Ajil does not become healthy | `docker compose logs uag-gateway` | Check root `UAG_*` values, Docker proxy reachability, provider credentials, and nested submodule checkout. |
 | STT returns provider/model errors | inspect Ajil logs and `AI_TRANSCRIPTION_*` | Configure the actual Ajil STT provider/model in root `.env`; the agent sends the language hint to the direct STT route. |
@@ -19,6 +20,14 @@ duration. For clipped initial words, increase pre-roll. See the [VAD guide](voic
 for ranges and use one setting change per test.
 
 ## Telegram VoIP handshake and media
+
+### The persistent service does not accept a call
+
+Check `docker compose ps` and `docker compose logs --tail=200 voice-agent`. The service requires
+`VOICE_AGENT_INBOUND_ENABLED=true`, a non-empty `VOICE_AGENT_INBOUND_USERNAME`, and that resolved
+user ID in `VOICE_AGENT_ALLOWED_PEER_IDS`. It accepts the resolved numeric ID, not a display name.
+Calls from all other accounts are intentionally declined. After changing the configured username,
+restart `voice-agent` so it resolves the new identity.
 
 ### Another process uses the same session
 

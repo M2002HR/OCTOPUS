@@ -27,10 +27,23 @@ docker compose up -d --wait uag-gateway
 ## Docker services
 
 `docker compose up -d --wait uag-gateway` starts `uag-redis` and the pinned Ajil gateway. The
-`voice-agent` service is deliberately behind the `agent` profile and defaults to `--help`, so a
-Compose up cannot autonomously place a call.
+`voice-agent` service is deliberately behind the `agent` profile. Its `serve` command accepts only
+the startup-resolved `VOICE_AGENT_INBOUND_USERNAME`; it does not dial anyone. It has
+`restart: unless-stopped` so it returns after a process or Docker restart.
 
-To open an interactive shell in the built agent image:
+Before enabling it, stop every other client/container using the same Telethon string session. Then
+start and inspect the persistent service:
+
+```bash
+docker compose --profile agent up -d voice-agent
+docker compose ps
+docker compose logs -f voice-agent
+```
+
+To intentionally stop it, use `docker compose --profile agent stop voice-agent`. Do not run an
+outbound `call` command from another process with the same session while the server is online.
+
+To open an interactive shell in the built agent image without starting the persistent command:
 
 ```bash
 docker compose --profile agent run --rm voice-agent bash

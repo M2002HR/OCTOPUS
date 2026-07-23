@@ -9,6 +9,12 @@ tail -f runtime/events.jsonl
 .venv/bin/python -c "import sqlite3; c = sqlite3.connect('runtime/voice_agent.sqlite3'); print(c.execute('SELECT name, status, count(*) FROM audit_events GROUP BY name, status ORDER BY name').fetchall())"
 ```
 
+The long-running container must show `Up` in `docker compose ps`. `restart: unless-stopped` keeps
+it running after a process or Docker daemon restart. The first successful startup records
+`inbound.service.ready`; an allowed call records `call.incoming.authorized`, then `call.active`.
+Unauthorized or concurrent calls record `call.incoming.rejected` and are discarded without entering
+the speech pipeline.
+
 The agent emits an event for call requests, connection state, safe Telegram/PyTgCalls updates,
 turn receipt, STT, AI, TTS, persistence, completion, and errors. Every event has a timestamp,
 trace ID, call ID, optional turn ID, name, status, and safe metadata. JSONL is suitable for a log

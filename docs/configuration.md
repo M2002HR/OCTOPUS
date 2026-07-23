@@ -18,14 +18,22 @@ or shell history.
 | `TELEGRAM_PROXY_TYPE` | `socks5` | Proxy scheme supported by Telethon/PySocks. |
 | `TELEGRAM_PROXY_HOST`, `TELEGRAM_PROXY_PORT` | empty, `0` | Proxy endpoint when enabled. |
 | `TELEGRAM_PROXY_USERNAME`, `TELEGRAM_PROXY_PASSWORD`, `TELEGRAM_PROXY_RDNS` | empty, `true` | Optional proxy credentials and remote DNS choice. |
+| `TELEGRAM_PROXY_HOST_DOCKER`, `TELEGRAM_PROXY_PORT_DOCKER` | `host.docker.internal`, `0` | Container-specific proxy endpoint. Compose maps these over the normal host/port for `voice-agent`. |
 | `VOICE_AGENT_ALLOWED_PEER_IDS` | empty | Required comma-separated numeric allowlist for outbound calls. |
 | `VOICE_AGENT_TEST_PEER_USERNAME` | empty | Convenience value only; the CLI still requires `--username`. |
+| `VOICE_AGENT_INBOUND_ENABLED` | `false` | Must be explicitly `true` before `serve` starts the persistent inbound service. |
+| `VOICE_AGENT_INBOUND_USERNAME` | empty | The sole inbound caller. It is resolved at startup and must also be in the numeric allowlist. |
 | `VOICE_AGENT_REQUIRE_DISCLOSURE` | `true` | Announces automated processing when a call connects. |
 | `VOICE_AGENT_CALL_TIMEOUT_SEC` | `120` | PyTgCalls connection timeout; minimum `10`. |
 
 The same Telethon authorization must not be active in another client during a call. A proxy used
 by Telethon carries signaling only; it does not prove that the host can reach Telegram media
 reflectors. See the VoIP section of [Troubleshooting](troubleshooting.md).
+
+The inbound server accepts only one active call and immediately declines every caller whose numeric
+ID differs from the startup-resolved `VOICE_AGENT_INBOUND_USERNAME`. Changing the username requires
+a service restart; this avoids accepting a renamed or unverified account by string comparison at
+call time.
 
 ## Voice behavior
 
