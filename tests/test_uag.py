@@ -107,3 +107,38 @@ async def test_vision_chat_uses_openai_data_url_content(tmp_path: Path) -> None:
         )
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_vision_chat_includes_each_referenced_image(tmp_path: Path) -> None:
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.jpg"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        content = payload["messages"][-1]["content"]
+        assert content[0]["type"] == "text"
+        assert [item["type"] for item in content[1:]] == ["image_url", "image_url"]
+        return httpx.Response(
+            200,
+            json={"winner": {"payload": {"choices": [{"message": {"content": "تصاویر"}}]}}},
+            request=request,
+        )
+
+    client = make_client()
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        assert (
+            await client.reply_with_images(
+                messages=[],
+                system_prompt="system",
+                image_paths=(first, second),
+                prompt="مقایسه کن",
+            )
+            == "تصاویر"
+        )
+    finally:
+        await client.aclose()

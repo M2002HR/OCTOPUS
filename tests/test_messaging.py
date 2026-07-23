@@ -40,8 +40,8 @@ class FakeUAG:
         assert "send_media" in system_prompt
         return "این فایل برای شماست [[send_media:guide]]"
 
-    async def reply_with_image(self, **kwargs: object) -> str:
-        assert kwargs["image_path"]
+    async def reply_with_images(self, **kwargs: object) -> str:
+        assert kwargs["image_paths"]
         return "تصویر دریافت شد"
 
     async def transcribe(self, path: Path, *, language: str | None) -> str:
@@ -54,6 +54,35 @@ class FakeSynthesizer:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(b"ogg")
         return 250
+
+
+class FakeMessage:
+    def __init__(
+        self,
+        *,
+        text: str = "",
+        voice: bool = False,
+        photo: bool = False,
+        reply: FakeMessage | None = None,
+    ) -> None:
+        self.id = 1
+        self.message = text
+        self.voice = object() if voice else None
+        self.audio = None
+        self.photo = object() if photo else None
+        self.video = None
+        self.document = None
+        self.reply_to = object() if reply else None
+        self._reply = reply
+        self.file = SimpleNamespace(size=8, mime_type="image/png" if photo else "audio/ogg")
+
+    async def get_reply_message(self) -> FakeMessage | None:
+        return self._reply
+
+    async def download_media(self, *, file: Path) -> str:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(b"media")
+        return str(file)
 
 
 def settings(tmp_path: Path) -> SimpleNamespace:
@@ -118,7 +147,7 @@ async def test_text_message_can_send_voice_and_requested_asset(tmp_path: Path) -
     assistant, client, store = make_assistant(tmp_path)
 
     reply, asset = await assistant._reply(
-        input_text="سلام", image_path=None, trace_id="trace", conversation_id="message:11"
+        input_text="سلام", image_paths=(), trace_id="trace", conversation_id="message:11"
     )
     assert reply == "این فایل برای شماست"
     assert asset and asset.asset_id == "guide"
@@ -132,6 +161,33 @@ async def test_text_message_can_send_voice_and_requested_asset(tmp_path: Path) -
 
     assert client.sent_files[0][1] is True
     assert client.sent_files[1][1] is False
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_reply_context_adds_referenced_text_photo_and_voice_transcript(
+    tmp_path: Path,
+) -> None:
+    assistant, _, store = make_assistant(tmp_path)
+    referenced_voice = FakeMessage(text="", voice=True)
+    referencing_voice = FakeMessage(text="جوابش چیه؟", reply=referenced_voice)
+    voice_context = await assistant._extract_reply_context(  # type: ignore[arg-type]
+        referencing_voice, "voice-trace", "message:11"
+    )
+    assert voice_context.kind == "voice"
+    assert voice_context.text == "متن ویس"
+
+    referenced_photo = FakeMessage(text="این تصویر نمونه است", photo=True)
+    referencing_photo = FakeMessage(text="این چیه؟", reply=referenced_photo)
+    photo_context = await assistant._extract_reply_context(  # type: ignore[arg-type]
+        referencing_photo, "photo-trace", "message:11"
+    )
+    assert photo_context.kind == "photo"
+    assert photo_context.text == "این تصویر نمونه است"
+    assert photo_context.image_paths[0].is_file()
+    prompt = assistant._with_reply_context("این چیه؟", photo_context)
+    assert "replying to a photo" in prompt
+    assert "این تصویر نمونه است" in prompt
     store.close()
 
 
