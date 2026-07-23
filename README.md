@@ -38,6 +38,21 @@ docker compose --profile agent up -d voice-agent
 docker compose logs -f voice-agent
 ```
 
+## UDP media overlay
+
+This host blocks direct outbound UDP, while Telegram calls require it for media. The private
+overlay captures the voice-agent namespace's UDP and carries it through an SSH connection. That
+SSH connection uses the required HTTP CONNECT proxy on port 3128.
+
+```bash
+python3 scripts/provision_media_relay.py
+docker compose --profile agent up -d --build
+```
+
+The remote relay binds only to loopback; no public relay port is opened. See
+[docs/media-overlay.md](docs/media-overlay.md) for topology, security, configuration, and the
+STUN preflight procedure.
+
 Read [docs/README.md](docs/README.md) before running a live call. It contains the architecture,
 configuration reference, deployment guide, testing workflow, operational runbook, and known
 Telegram VoIP networking constraints.

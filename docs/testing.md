@@ -29,6 +29,24 @@ UAG_BASE_URL=http://127.0.0.1:18081 \
 Success means the command prints a generated reply and an Ogg/Opus path. Inspect the recent
 content-free events with `tail -f runtime/events.jsonl` and query SQLite only when authorized.
 
+## UDP overlay preflight
+
+Before a live call, provision and start the media overlay:
+
+```bash
+python3 scripts/provision_media_relay.py
+docker compose --profile agent up -d --build
+docker compose --profile agent ps
+```
+
+All of `voice-media-ssh-tunnel`, `voice-media-tunnel`, and `voice-agent` must be running; the
+first two must be healthy. The deployment's acceptance criterion is a STUN binding request that
+returns through the overlay. It proves the complete required path: GOST UDP, the SSH forward,
+HTTP CONNECT through the Docker-facing endpoint for host port `3128`, and the remote UDP egress.
+Run `docker compose --profile agent exec -T voice-agent python
+/app/scripts/media_overlay_stun_probe.py`; it must pass. Do not bypass the proxy with a direct
+remote relay connection.
+
 ## Manual inbound live-call test
 
 1. Confirm the test peer’s numeric ID is in `VOICE_AGENT_ALLOWED_PEER_IDS`.
@@ -39,7 +57,7 @@ content-free events with `tail -f runtime/events.jsonl` and query SQLite only wh
 5. Start the persistent server:
 
    ```bash
-   docker compose --profile agent up -d voice-agent
+   docker compose --profile agent up -d
    docker compose logs -f voice-agent
    ```
 

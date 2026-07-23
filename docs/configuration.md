@@ -90,3 +90,10 @@ by the pinned Ajil submodule. Do not create `vendor/Ajil_Unified_AI_Gateway/.env
 Transcript text is sensitive data. Protect the database, establish an external retention policy,
 and use `off` where transcript storage is not authorized. Encryption-at-rest is intentionally not
 claimed by this project; use encrypted host storage or a managed encrypted volume if required.
+
+## UDP media overlay
+
+The full `VOICE_AGENT_MEDIA_*` configuration surface is documented in
+[media-overlay.md](media-overlay.md). It is deliberately independent from Telegram signaling
+proxy values: media is captured by a dedicated network sidecar, then reaches the required proxy
+through the SSH sidecar. All values, including the relay credential, are set from the root `.env`.
