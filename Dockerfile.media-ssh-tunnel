@@ -1,0 +1,14 @@
+FROM alpine:3.22
+
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG ALL_PROXY=""
+ARG NO_PROXY=""
+
+RUN HTTP_PROXY="${HTTP_PROXY}" HTTPS_PROXY="${HTTPS_PROXY}" ALL_PROXY="${ALL_PROXY}" NO_PROXY="${NO_PROXY}" \
+    apk add --no-cache netcat-openbsd openssh-client
+
+COPY scripts/media_ssh_tunnel.sh /usr/local/bin/media-ssh-tunnel
+RUN chmod 0755 /usr/local/bin/media-ssh-tunnel
+
+ENTRYPOINT ["/usr/local/bin/media-ssh-tunnel"]

@@ -54,6 +54,7 @@ services:
         PIP_EXTRA_INDEX_URL: ${UAG_PIP_EXTRA_INDEX_URL:-}
     profiles: ["agent"]
     restart: unless-stopped
+    network_mode: "service:voice-media-tunnel"
     env_file: .env
     environment:
       UAG_BASE_URL: http://uag-gateway:8080
@@ -62,11 +63,69 @@ services:
       AUDIT_JSONL_PATH: /runtime/events.jsonl
       TELEGRAM_PROXY_HOST: ${TELEGRAM_PROXY_HOST_DOCKER:-host.docker.internal}
       TELEGRAM_PROXY_PORT: ${TELEGRAM_PROXY_PORT_DOCKER:-0}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./runtime:/runtime
     depends_on:
       uag-gateway:
         condition: service_healthy
+      voice-media-tunnel:
+        condition: service_healthy
     command: ["serve"]
+
+  # The SSH transport is deliberately routed through the existing HTTP proxy
+  # (host.docker.internal:32080 -> host port 3128). It exposes no host port.
+  voice-media-ssh-tunnel:
+    build:
+      context: .
+      dockerfile: Dockerfile.media-ssh-tunnel
+      network: ${UAG_DOCKER_BUILD_NETWORK:-default}
+      args:
+        HTTP_PROXY: ${UAG_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${UAG_BUILD_HTTPS_PROXY:-}
+        ALL_PROXY: ${UAG_BUILD_ALL_PROXY:-}
+        NO_PROXY: ${UAG_BUILD_NO_PROXY:-}
+    profiles: ["agent"]
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${VOICE_AGENT_MEDIA_SSH_KEY_PATH:-/root/.ssh/id_ed25519_tunnel}:/run/ssh-key:ro
+      - ${VOICE_AGENT_MEDIA_SSH_KNOWN_HOSTS_PATH:-/root/.ssh/known_hosts}:/run/ssh-known-hosts:ro
+    environment:
+      VOICE_AGENT_MEDIA_SSH_KEY_PATH: /run/ssh-key
+      VOICE_AGENT_MEDIA_SSH_KNOWN_HOSTS_PATH: /run/ssh-known-hosts
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 $$VOICE_AGENT_MEDIA_SSH_FORWARD_PORT"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  # Shares its network namespace with voice-agent so TPROXY captures the
+  # agent's locally-originated media UDP without changing PyTgCalls code.
+  voice-media-tunnel:
+    image: ${VOICE_AGENT_MEDIA_GOST_IMAGE:-gogost/gost:3}
+    profiles: ["agent"]
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./scripts/media_tunnel.sh:/usr/local/bin/media-tunnel:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/media-tunnel"]
+    depends_on:
+      voice-media-ssh-tunnel:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "ip rule show | grep -q 'fwmark' && iptables -t mangle -S VOICE_AGENT_GOST | grep -q TPROXY",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
