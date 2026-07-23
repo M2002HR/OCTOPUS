@@ -53,6 +53,13 @@ The remote relay binds only to loopback; no public relay port is opened. See
 [docs/media-overlay.md](docs/media-overlay.md) for topology, security, configuration, and the
 STUN preflight procedure.
 
+## Private messages
+
+The persistent service also handles text, voice notes, and photos from the one configured user.
+Replies are voice notes by default, with explicit `/text` and `/voice` overrides. It can send only
+approved existing images/videos from a local manifest; it never generates media. See
+[docs/messaging.md](docs/messaging.md).
+
 Read [docs/README.md](docs/README.md) before running a live call. It contains the architecture,
 configuration reference, deployment guide, testing workflow, operational runbook, and known
 Telegram VoIP networking constraints.

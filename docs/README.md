@@ -9,6 +9,7 @@ This directory is the canonical English documentation for the project.
 | [Voice turn detection](voice-turn-detection.md) | Tune latency versus interruption resistance |
 | [Deployment](deployment.md) | Build and operate the Docker stack |
 | [UDP media overlay](media-overlay.md) | Operate the required UDP-over-SSH-over-proxy call-media path |
+| [Private messaging](messaging.md) | Operate text, voice-note, photo, and approved local-media replies |
 | [Testing](testing.md) | Run unit, integration, deployment, and live-call tests |
 | [Operations](operations.md) | Inspect logs, audit data, retention, and incident procedures |
 | [Troubleshooting](troubleshooting.md) | Resolve common setup, Ajil, Telegram, and VoIP failures |

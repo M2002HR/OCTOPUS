@@ -20,6 +20,12 @@ turn receipt, STT, AI, TTS, persistence, completion, and errors. Every event has
 trace ID, call ID, optional turn ID, name, status, and safe metadata. JSONL is suitable for a log
 collector; SQLite is suitable for indexed debugging and aggregate analysis.
 
+The message assistant uses the same audit pipeline with `message.*` event names. Its startup event
+is `message.service.ready`; normal processing is `message.received`, `message.stt.*` or
+`message.ai.*`, `message.voice.sent` or `message.text.sent`, and `message.completed`. Approved
+outbound files add `message.media.sent`. Under `transcript_only`, `message_turns` contains the
+content-bearing input and reply; protect it exactly like `conversation_turns`.
+
 ## Privacy boundaries
 
 `events.jsonl` contains no transcripts, replies, audio, call keys, signaling payloads, tokens, or

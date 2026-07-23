@@ -97,3 +97,9 @@ The full `VOICE_AGENT_MEDIA_*` configuration surface is documented in
 [media-overlay.md](media-overlay.md). It is deliberately independent from Telegram signaling
 proxy values: media is captured by a dedicated network sidecar, then reaches the required proxy
 through the SSH sidecar. All values, including the relay credential, are set from the root `.env`.
+
+## Private messaging
+
+`VOICE_AGENT_MESSAGE_*` settings control the same persistent `serve` process's allowlisted private
+message assistant. Their semantics, privacy behavior, photo support, voice-first response policy,
+and local media-library contract are documented in [messaging.md](messaging.md).

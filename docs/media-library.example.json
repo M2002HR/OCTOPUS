@@ -1,0 +1,14 @@
+{
+  "assets": [
+    {
+      "id": "welcome-image",
+      "file": "welcome.jpg",
+      "caption": "Welcome image"
+    },
+    {
+      "id": "product-demo",
+      "file": "product-demo.mp4",
+      "caption": "Product demonstration"
+    }
+  ]
+}

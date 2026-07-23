@@ -14,7 +14,8 @@ docker compose config --quiet
 The tests cover configuration validation, allowlist behavior, PCM turn construction (including
 pre-roll, hysteresis, noise rejection, silence completion, duration calculation, and maximum
 length), orchestration event order, transcript-retention policy, Ajil request contracts, Edge TTS
-adapter behavior, storage, and Telegram-session policy.
+adapter behavior, storage, Telegram-session policy, message response-mode selection, media-library
+path containment, audio/image attachment classification, and the image-chat data-URL contract.
 
 ## Real STT → AI → TTS smoke test
 
@@ -69,6 +70,20 @@ remote relay connection.
 
 Do not call arbitrary usernames as a test. The numeric allowlist is intentionally enforced before
 Telegram call setup.
+
+## Manual private-message test
+
+With `voice-agent` already running, use only the configured
+`VOICE_AGENT_MESSAGE_USERNAME` account. Send, in order: plain text (expect a voice note), `/text`
+followed by a question (expect text), a voice note or audio attachment (expect STT then a voice
+note), and a photo or image attachment with a question (expect a vision request then a voice note).
+Observe the content-free `message.*` events in `runtime/events.jsonl`. When transcript retention
+is authorized, query `message_turns` in the SQLite database for the stored transcript/reply pair.
+
+To test outbound image/video delivery, first add an authorized local file and its manifest entry as
+described in [Private messaging](messaging.md#local-image-and-video-sending). Ask a question that
+clearly maps to that asset. Confirm `message.media.sent` and that Telegram receives the original
+file; no image/video generation path exists.
 
 ## What a successful live test proves
 
