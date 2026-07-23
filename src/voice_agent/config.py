@@ -41,6 +41,8 @@ class Settings:
     audit_jsonl_path: Path
     allowed_peer_ids: frozenset[int]
     test_peer_username: str
+    inbound_enabled: bool
+    inbound_username: str
     require_disclosure: bool
     recording_mode: str
     max_turn_seconds: int
@@ -112,6 +114,8 @@ class Settings:
             audit_jsonl_path=events,
             allowed_peer_ids=_csv_int("VOICE_AGENT_ALLOWED_PEER_IDS"),
             test_peer_username=os.getenv("VOICE_AGENT_TEST_PEER_USERNAME", "").strip(),
+            inbound_enabled=_bool("VOICE_AGENT_INBOUND_ENABLED", False),
+            inbound_username=os.getenv("VOICE_AGENT_INBOUND_USERNAME", "").strip(),
             require_disclosure=_bool("VOICE_AGENT_REQUIRE_DISCLOSURE", True),
             recording_mode=recording_mode,
             max_turn_seconds=_int("VOICE_AGENT_MAX_TURN_SECONDS", 45, minimum=1),
@@ -174,3 +178,9 @@ class Settings:
             not self.telegram_proxy_host or self.telegram_proxy_port <= 0
         ):
             raise ConfigurationError("enabled Telegram proxy requires host and port")
+
+    def validate_inbound_service(self) -> None:
+        if not self.inbound_enabled:
+            raise ConfigurationError("VOICE_AGENT_INBOUND_ENABLED must be true for serve mode")
+        if not self.inbound_username:
+            raise ConfigurationError("VOICE_AGENT_INBOUND_USERNAME is required for serve mode")

@@ -40,3 +40,23 @@ def test_settings_rejects_invalid_vad_hysteresis(
     monkeypatch.setenv("VOICE_AGENT_VAD_CONTINUE_RMS", "101")
     with pytest.raises(ConfigurationError, match="CONTINUE_RMS"):
         Settings.load(tmp_path / "missing.env")
+
+
+def test_settings_requires_explicit_inbound_enablement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_ENABLED", "false")
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_USERNAME", "we_are_waiting_for_him")
+    settings = Settings.load(tmp_path / "missing.env")
+    with pytest.raises(ConfigurationError, match="INBOUND_ENABLED"):
+        settings.validate_inbound_service()
+
+
+def test_settings_requires_inbound_username(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_ENABLED", "true")
+    monkeypatch.delenv("VOICE_AGENT_INBOUND_USERNAME", raising=False)
+    settings = Settings.load(tmp_path / "missing.env")
+    with pytest.raises(ConfigurationError, match="INBOUND_USERNAME"):
+        settings.validate_inbound_service()

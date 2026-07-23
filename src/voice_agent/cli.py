@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
+import os
 from pathlib import Path
 
 from voice_agent.adapters.edge_tts import EdgeSpeechSynthesizer
@@ -73,7 +75,21 @@ async def _call(args: argparse.Namespace) -> None:
         await assistant.close()
 
 
+async def _serve(args: argparse.Namespace) -> None:
+    settings = Settings.load(Path(args.env) if args.env else None)
+    assistant = LiveVoiceAssistant(settings)
+    try:
+        await assistant.serve_incoming()
+        await wait_for_termination()
+    finally:
+        await assistant.close()
+
+
 def main() -> None:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     parser = argparse.ArgumentParser(prog="telegram-voice-agent")
     sub = parser.add_subparsers(dest="command", required=True)
     process = sub.add_parser(
@@ -87,11 +103,17 @@ def main() -> None:
     call = sub.add_parser("call", help="Place one explicitly requested allowlisted test call")
     call.add_argument("--username", required=True)
     call.add_argument("--env")
+    serve = sub.add_parser(
+        "serve", help="Stay online and accept calls only from VOICE_AGENT_INBOUND_USERNAME"
+    )
+    serve.add_argument("--env")
     args = parser.parse_args()
     if args.command == "process-file":
         asyncio.run(_process_file(args))
     if args.command == "call":
         asyncio.run(_call(args))
+    if args.command == "serve":
+        asyncio.run(_serve(args))
 
 
 if __name__ == "__main__":

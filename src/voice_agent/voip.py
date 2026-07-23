@@ -35,6 +35,7 @@ class TelethonVoipEngine:
         self,
         *,
         telethon_client: Any,
+        calls: Any | None = None,
         audit: AuditStore,
         call_id: str,
         peer_id: int,
@@ -52,7 +53,8 @@ class TelethonVoipEngine:
         runtime_dir: Path,
         on_utterance: Callable[[AudioTurn], Awaitable[None]],
     ) -> None:
-        self.calls = PyTgCalls(telethon_client)
+        self.calls = calls if calls is not None else PyTgCalls(telethon_client)
+        self._owns_calls = calls is None
         self.audit = audit
         self.call_id = call_id
         self.peer_id = peer_id
@@ -73,7 +75,7 @@ class TelethonVoipEngine:
             channels=channels,
             on_utterance=self._schedule_utterance,
         )
-        self.started = False
+        self.started = not self._owns_calls
         # A direct Telethon raw handler distinguishes a missing Telegram update
         # from a downstream PyTgCalls/NTgCalls handshake failure.  Never retain
         # the call payload, keys, fingerprint, or signaling bytes.
@@ -182,3 +184,132 @@ class TelethonVoipEngine:
         except Exception:  # pragma: no cover - integration failure path
             logger.exception("voice turn processing failed")
             self.audit.append(Event("voip.turn.failed", self.call_id, self.call_id, status="error"))
+
+
+class IncomingCallServer:
+    """Own one already-authorized PyTgCalls client and selectively accept inbound calls."""
+
+    def __init__(
+        self,
+        *,
+        telethon_client: Any,
+        audit: AuditStore,
+        allowed_peer_id: int,
+        on_authorized_call: Callable[[int, Any], Awaitable[None]],
+        on_call_ended: Callable[[int], Awaitable[None]],
+        calls: Any | None = None,
+    ) -> None:
+        self.calls = calls if calls is not None else PyTgCalls(telethon_client)
+        self.audit = audit
+        self.allowed_peer_id = allowed_peer_id
+        self.on_authorized_call = on_authorized_call
+        self.on_call_ended = on_call_ended
+        self.started = False
+        self.busy = False
+        self._tasks: set[asyncio.Future[None]] = set()
+        self.calls.add_handler(self._on_update)
+
+    async def start(self) -> None:
+        if self.started:
+            return
+        await self.calls.start()
+        self.started = True
+        self.audit.append(
+            Event(
+                "inbound.service.ready",
+                "inbound-listener",
+                details={"allowed_peer_id": self.allowed_peer_id},
+            )
+        )
+
+    async def stop(self) -> None:
+        self.calls.remove_handler(self._on_update)
+        for task in self._tasks:
+            task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+        self.started = False
+
+    async def _on_update(self, _: Any, update: Any) -> None:
+        if not isinstance(update, ChatUpdate):
+            return
+        if update.status & ChatUpdate.Status.INCOMING_CALL:
+            if update.chat_id != self.allowed_peer_id:
+                self.audit.append(
+                    Event(
+                        "call.incoming.rejected",
+                        "inbound-listener",
+                        details={"peer_id": update.chat_id, "reason": "unauthorized"},
+                    )
+                )
+                self._track(self._discard(update.chat_id))
+                return
+            if self.busy:
+                self.audit.append(
+                    Event(
+                        "call.incoming.rejected",
+                        "inbound-listener",
+                        details={"peer_id": update.chat_id, "reason": "busy"},
+                    )
+                )
+                self._track(self._discard(update.chat_id))
+                return
+            self.busy = True
+            self.audit.append(
+                Event(
+                    "call.incoming.authorized",
+                    "inbound-listener",
+                    details={"peer_id": update.chat_id},
+                )
+            )
+            self._track(self._accept(update.chat_id, update))
+            return
+        is_allowed_discard = (
+            update.chat_id == self.allowed_peer_id
+            and update.status & ChatUpdate.Status.DISCARDED_CALL
+        )
+        if is_allowed_discard:
+            was_busy = self.busy
+            self.busy = False
+            if was_busy:
+                self._track(self.on_call_ended(update.chat_id))
+
+    async def _accept(self, peer_id: int, update: Any) -> None:
+        try:
+            await self.on_authorized_call(peer_id, update)
+        except Exception as exc:  # pragma: no cover - network failure path
+            logger.exception("failed to accept authorized incoming Telegram call")
+            self.busy = False
+            self.audit.append(
+                Event(
+                    "call.incoming.failed",
+                    "inbound-listener",
+                    status="error",
+                    details={"peer_id": peer_id, "error_type": type(exc).__name__},
+                )
+            )
+            await self._discard(peer_id)
+
+    async def _discard(self, peer_id: int) -> None:
+        try:
+            # PyTgCalls exposes this through its MTProto adapter but does not
+            # currently publish a high-level decline method for private calls.
+            await self.calls._app.discard_call(peer_id, True)
+        except Exception as exc:  # pragma: no cover - Telegram failure path
+            logger.exception("failed to reject incoming Telegram call")
+            self.audit.append(
+                Event(
+                    "call.incoming.reject_failed",
+                    "inbound-listener",
+                    status="error",
+                    details={"peer_id": peer_id, "error_type": type(exc).__name__},
+                )
+            )
+        finally:
+            self.calls._p2p_configs.pop(peer_id, None)
+
+    def _track(self, coroutine: Awaitable[None]) -> None:
+        task = asyncio.ensure_future(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
