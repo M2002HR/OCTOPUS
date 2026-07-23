@@ -40,6 +40,16 @@ def _runtime_path(name: str, default: str, runtime: Path) -> Path:
     return path if path.is_absolute() else runtime / path
 
 
+def _voice_map(name: str) -> dict[str, str]:
+    raw = os.getenv(name, "")
+    result: dict[str, str] = {}
+    for item in raw.split(","):
+        language, separator, voice = item.partition(":")
+        if separator and language.strip() and voice.strip():
+            result[language.strip().casefold()] = voice.strip()
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     runtime_dir: Path
@@ -75,6 +85,7 @@ class Settings:
     transcription_provider: str
     transcription_models: tuple[str, ...]
     edge_voice: str
+    edge_voices_by_language: dict[str, str]
     edge_rate: str
     ffmpeg_bin: str
     telegram_api_id: int
@@ -94,6 +105,9 @@ class Settings:
     message_media_library_dir: Path
     message_media_manifest: Path
     message_vision_enabled: bool
+    message_stt_language: str | None
+    vision_models: tuple[str, ...]
+    vision_providers: tuple[str, ...]
 
     @classmethod
     def load(cls, env_file: Path | None = None) -> Settings:
@@ -145,7 +159,8 @@ class Settings:
             audio_channels=audio_channels,
             language=os.getenv("VOICE_AGENT_LANGUAGE", "fa").strip() or "fa",
             system_prompt=os.getenv(
-                "VOICE_AGENT_SYSTEM_PROMPT", "You are a helpful voice assistant."
+                "VOICE_AGENT_SYSTEM_PROMPT",
+                "Reply naturally, directly, and concisely. Match the user's language.",
             ).strip(),
             max_history_messages=_int("VOICE_AGENT_MAX_HISTORY_MESSAGES", 12, minimum=1),
             uag_base_url=os.getenv("UAG_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
@@ -161,7 +176,8 @@ class Settings:
             chat_providers=csv("AI_CHAT_PROVIDERS"),
             transcription_provider=os.getenv("AI_TRANSCRIPTION_PROVIDER", "").strip(),
             transcription_models=csv("AI_TRANSCRIPTION_MODELS"),
-            edge_voice=os.getenv("EDGE_TTS_VOICE", "fa-IR-DilaraNeural").strip(),
+            edge_voice=os.getenv("EDGE_TTS_VOICE", "fa-IR-FaridNeural").strip(),
+            edge_voices_by_language=_voice_map("EDGE_TTS_VOICE_BY_LANGUAGE"),
             edge_rate=os.getenv("EDGE_TTS_RATE", "+0%").strip(),
             ffmpeg_bin=os.getenv("FFMPEG_BIN", "ffmpeg").strip(),
             telegram_api_id=_int("TELEGRAM_API_ID", 0, minimum=0),
@@ -179,7 +195,7 @@ class Settings:
                 "VOICE_AGENT_MESSAGE_USERNAME",
                 os.getenv("VOICE_AGENT_INBOUND_USERNAME", ""),
             ).strip(),
-            message_default_response=os.getenv("VOICE_AGENT_MESSAGE_DEFAULT_RESPONSE", "voice")
+            message_default_response=os.getenv("VOICE_AGENT_MESSAGE_DEFAULT_RESPONSE", "text")
             .strip()
             .casefold(),
             message_max_media_bytes=_int(
@@ -192,6 +208,9 @@ class Settings:
                 "VOICE_AGENT_MESSAGE_MEDIA_MANIFEST", "media-library/manifest.json", runtime
             ),
             message_vision_enabled=_bool("VOICE_AGENT_MESSAGE_VISION_ENABLED", True),
+            message_stt_language=os.getenv("VOICE_AGENT_MESSAGE_STT_LANGUAGE", "").strip() or None,
+            vision_models=csv("VOICE_AGENT_VISION_MODELS") or ("gemini/gemini-2.5-flash",),
+            vision_providers=csv("VOICE_AGENT_VISION_PROVIDERS") or ("gemini",),
         )
 
     def validate_telegram(self) -> None:

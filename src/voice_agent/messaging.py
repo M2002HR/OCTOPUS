@@ -1,4 +1,4 @@
-"""Private, allowlisted Telegram message assistant with voice-first replies."""
+"""Private, allowlisted Telegram message assistant with text-first replies."""
 
 from __future__ import annotations
 
@@ -260,7 +260,9 @@ class MessageAssistant:
             if not path:
                 raise RuntimeError("Telegram did not download the audio message")
             self.audit.append(Event("message.stt.started", trace_id, conversation_id))
-            text = await self.uag.transcribe(Path(path), language=self.settings.language)
+            text = await self.uag.transcribe(
+                Path(path), language=self.settings.message_stt_language
+            )
             self.audit.append(
                 Event(
                     "message.stt.completed",
@@ -347,7 +349,10 @@ class MessageAssistant:
     def _message_system_prompt(self) -> str:
         return (
             f"{self.settings.system_prompt}\n\n"
-            "You are replying in a private Telegram conversation. Keep answers concise. "
+            "Reply in the same language as the user's latest message unless they explicitly ask "
+            "for another language. Write naturally and directly, as in an ordinary private chat. "
+            "Do not volunteer a persona, implementation details, or that you are an assistant/bot. "
+            "If asked directly about your identity, answer truthfully. Keep answers concise. "
             "Do not claim to generate images or videos. You may send one existing local media "
             "asset "
             "only by placing [[send_media:ASSET_ID]] at the very end of your response. "

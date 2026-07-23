@@ -16,7 +16,9 @@ class ChatBrain(Protocol):
 
 
 class SpeechSynthesizer(Protocol):
-    async def synthesize(self, text: str, destination: Path) -> int: ...
+    async def synthesize(
+        self, text: str, destination: Path, *, language: str | None = None
+    ) -> int: ...
 
 
 class AudioPlayer(Protocol):

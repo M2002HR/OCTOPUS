@@ -30,12 +30,17 @@ def build_orchestrator(
         providers=settings.chat_providers,
         transcription_provider=settings.transcription_provider,
         transcription_models=settings.transcription_models,
+        vision_models=settings.vision_models,
+        vision_providers=settings.vision_providers,
     )
     orchestrator = ConversationOrchestrator(
         transcriber=client,
         brain=client,
         synthesizer=EdgeSpeechSynthesizer(
-            voice=settings.edge_voice, rate=settings.edge_rate, ffmpeg_bin=settings.ffmpeg_bin
+            voice=settings.edge_voice,
+            voices_by_language=settings.edge_voices_by_language,
+            rate=settings.edge_rate,
+            ffmpeg_bin=settings.ffmpeg_bin,
         ),
         audit=audit,
         system_prompt=settings.system_prompt,

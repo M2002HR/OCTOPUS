@@ -29,6 +29,8 @@ class UAGClient:
         providers: tuple[str, ...],
         transcription_provider: str,
         transcription_models: tuple[str, ...],
+        vision_models: tuple[str, ...] = (),
+        vision_providers: tuple[str, ...] = (),
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.chat_endpoint = chat_endpoint if chat_endpoint.startswith("/") else f"/{chat_endpoint}"
@@ -44,6 +46,8 @@ class UAGClient:
         self.providers = providers
         self.transcription_provider = transcription_provider
         self.transcription_models = transcription_models
+        self.vision_models = vision_models or models
+        self.vision_providers = vision_providers or providers
 
     def _headers(self) -> dict[str, str]:
         return {self.auth_header_name: self.auth_token} if self.auth_token else {}
@@ -79,7 +83,9 @@ class UAGClient:
     async def reply(self, *, messages: Sequence[ChatMessage], system_prompt: str) -> str:
         payload_messages: list[dict[str, object]] = [{"role": "system", "content": system_prompt}]
         payload_messages.extend({"role": item.role, "content": item.content} for item in messages)
-        return await self._reply_with_payload(payload_messages)
+        return await self._reply_with_payload(
+            payload_messages, models=self.models, providers=self.providers
+        )
 
     async def reply_with_image(
         self,
@@ -98,16 +104,24 @@ class UAGClient:
         payload_messages: list[dict[str, object]] = [{"role": "system", "content": system_prompt}]
         payload_messages.extend({"role": item.role, "content": item.content} for item in messages)
         payload_messages.append({"role": "user", "content": content})
-        return await self._reply_with_payload(payload_messages)
+        return await self._reply_with_payload(
+            payload_messages, models=self.vision_models, providers=self.vision_providers
+        )
 
-    async def _reply_with_payload(self, messages: list[dict[str, object]]) -> str:
+    async def _reply_with_payload(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        models: tuple[str, ...],
+        providers: tuple[str, ...],
+    ) -> str:
         payload: dict[str, Any] = {
-            "model": ",".join(self.models),
+            "model": ",".join(models),
             "messages": messages,
             "stream": False,
         }
-        if self.providers:
-            payload["x_router"] = {"providers": list(self.providers), "strategy": "fallback_chain"}
+        if providers:
+            payload["x_router"] = {"providers": list(providers), "strategy": "fallback_chain"}
         response = await self.client.post(
             self.base_url + self.chat_endpoint, json=payload, headers=self._headers()
         )
