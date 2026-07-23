@@ -54,6 +54,7 @@ class TelethonVoipEngine:
         on_utterance: Callable[[AudioTurn], Awaitable[None]],
     ) -> None:
         self.calls = calls if calls is not None else PyTgCalls(telethon_client)
+        self.telethon_client = telethon_client
         self._owns_calls = calls is None
         self.audit = audit
         self.call_id = call_id
@@ -92,8 +93,9 @@ class TelethonVoipEngine:
                         self.call_id,
                         details={"update_type": update_name},
                     )
-                )
+                    )
 
+        self._raw_handler = _observe_raw_telegram_update
         self.calls.add_handler(self._on_update)
 
     async def start(self) -> None:
@@ -131,9 +133,17 @@ class TelethonVoipEngine:
         return stream
 
     async def hangup(self) -> None:
-        if self.started:
-            await self.calls.leave_call(self.peer_id)
-            self.audit.append(Event("voip.hangup", self.call_id, self.call_id))
+        try:
+            if self.started:
+                await self.calls.leave_call(self.peer_id)
+                self.audit.append(Event("voip.hangup", self.call_id, self.call_id))
+        finally:
+            self.detach()
+
+    def detach(self) -> None:
+        """Remove per-call listeners so failed/retried calls cannot duplicate events."""
+        self.calls.remove_handler(self._on_update)
+        self.telethon_client.remove_event_handler(self._raw_handler)
 
     async def _on_update(self, _: Any, update: Any) -> None:
         # Key-exchange state is recorded without persisting any cryptographic

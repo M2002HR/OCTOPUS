@@ -206,6 +206,10 @@ class LiveVoiceAssistant:
                     details={"error_type": type(exc).__name__},
                 )
             )
+            self.engine.detach()
+            self._cleanup_call_media(call.id)
+            self.engine = None
+            self.call = None
             raise
         call.transition(CallState.ACTIVE)
         self.audit.append(Event("call.active", call.id, call.id))
@@ -217,6 +221,8 @@ class LiveVoiceAssistant:
             self.call.transition(CallState.ENDED)
         self.audit.append(Event("call.ended", self.call.id, self.call.id))
         self._cleanup_call_media(self.call.id)
+        if self.engine is not None:
+            self.engine.detach()
         self.engine = None
         self.call = None
 
