@@ -14,9 +14,9 @@ services:
       dockerfile: Dockerfile
       network: ${UAG_DOCKER_BUILD_NETWORK:-default}
       args:
-        HTTP_PROXY: ${UAG_PROXY_URL_DOCKER:-}
-        HTTPS_PROXY: ${UAG_PROXY_URL_DOCKER:-}
-        ALL_PROXY: ${UAG_PROXY_URL_DOCKER:-}
+        HTTP_PROXY: ${UAG_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${UAG_BUILD_HTTPS_PROXY:-}
+        ALL_PROXY: ${UAG_BUILD_ALL_PROXY:-}
         NO_PROXY: ${UAG_BUILD_NO_PROXY:-}
         PIP_INDEX_URL: ${UAG_PIP_INDEX_URL:-}
         PIP_EXTRA_INDEX_URL: ${UAG_PIP_EXTRA_INDEX_URL:-}
