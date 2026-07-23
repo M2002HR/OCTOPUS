@@ -401,8 +401,15 @@ class MessageAssistant:
         if not context.text and not context.image_paths:
             return input_text
         reference = context.text or "[Referenced image without a caption]"
+        if context.kind in {"voice", "audio"}:
+            label = (
+                "The user is replying to a voice message that has already been fully transcribed. "
+                "The following is plain text, not an audio file:"
+            )
+        else:
+            label = f"The user is replying to a {context.kind} message:"
         return (
-            f"[The user is replying to a {context.kind} message:]\n{reference}\n\n"
+            f"[{label}]\n{reference}\n\n"
             f"[New message:]\n{input_text}"
         )
 
@@ -460,6 +467,10 @@ class MessageAssistant:
             "for another language. Write naturally and directly, as in an ordinary private chat. "
             "Do not volunteer a persona, implementation details, or that you are an assistant/bot. "
             "If asked directly about your identity, answer truthfully. Keep answers concise. "
+            "Quoted voice messages are already transcribed into plain text before you receive "
+            "them; "
+            "never claim that you cannot listen to them. Write the answer only: the application, "
+            "not you, handles text versus voice delivery. "
             "Do not claim to generate images or videos. You may send one existing local media "
             "asset "
             "only by placing [[send_media:ASSET_ID]] at the very end of your response. "

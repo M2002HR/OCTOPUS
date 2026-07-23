@@ -176,6 +176,9 @@ async def test_reply_context_adds_referenced_text_photo_and_voice_transcript(
     )
     assert voice_context.kind == "voice"
     assert voice_context.text == "متن ویس"
+    voice_prompt = assistant._with_reply_context("چی گفت؟", voice_context)
+    assert "already been fully transcribed" in voice_prompt
+    assert "متن ویس" in voice_prompt
 
     referenced_photo = FakeMessage(text="این تصویر نمونه است", photo=True)
     referencing_photo = FakeMessage(text="این چیه؟", reply=referenced_photo)
