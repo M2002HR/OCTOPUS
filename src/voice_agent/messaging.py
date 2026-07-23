@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 MEDIA_DIRECTIVE = re.compile(r"\[\[send_media:([A-Za-z0-9_.-]+)\]\]")
 TEXT_REQUEST = re.compile(r"(?:^/text\b|\b(?:متنی|متن بده|بدون ویس|ویس نده|text)\b)", re.I)
 VOICE_REQUEST = re.compile(r"(?:^/voice\b|\b(?:ویس|صوتی|voice)\b)", re.I)
+VOICE_DELIVERY_REFUSAL = re.compile(
+    r"(?:نمی\s*توانم|نمی\s*تونم).{0,48}(?:ویس|صوت|پاسخ صوتی)"
+    r"|امکان.{0,48}(?:ویس|صوت|پاسخ صوتی).{0,48}ندارم"
+    r"|(?:can(?:not|'t)|unable\s+to).{0,48}(?:send|provide|make).{0,24}voice",
+    re.I,
+)
 
 
 class ResponseMode(StrEnum):
@@ -161,6 +167,7 @@ class MessageAssistant:
             reply, asset = await self._reply(
                 input_text=prompt,
                 image_paths=(*content.image_paths, *reply_context.image_paths),
+                response_mode=mode,
                 trace_id=trace_id,
                 conversation_id=conversation_id,
             )
@@ -427,6 +434,7 @@ class MessageAssistant:
         *,
         input_text: str,
         image_paths: tuple[Path, ...],
+        response_mode: ResponseMode,
         trace_id: str,
         conversation_id: str,
     ) -> tuple[str, LibraryAsset | None]:
@@ -434,18 +442,28 @@ class MessageAssistant:
         history[:] = history[-self.settings.max_history_messages :]
         system_prompt = self._message_system_prompt()
         self.audit.append(Event("message.ai.started", trace_id, conversation_id))
-        if image_paths and self.settings.message_vision_enabled:
-            raw_reply = await self.uag.reply_with_images(
-                messages=history,
-                system_prompt=system_prompt,
+        raw_reply = await self._ask_model(
+            history=history,
+            system_prompt=system_prompt,
+            input_text=input_text,
+            image_paths=image_paths,
+        )
+        if response_mode is ResponseMode.VOICE and self._is_voice_delivery_refusal(raw_reply):
+            self.audit.append(Event("message.ai.voice_delivery_retry", trace_id, conversation_id))
+            raw_reply = await self._ask_model(
+                history=history,
+                system_prompt=(
+                    f"{system_prompt}\n\n"
+                    "The user explicitly requested voice delivery. Do not say that you cannot send "
+                    "voice or audio. Answer the user's request normally; your text will be "
+                    "converted to a voice note by the application."
+                ),
+                input_text=input_text,
                 image_paths=image_paths,
-                prompt=input_text,
             )
+        if image_paths and self.settings.message_vision_enabled:
             history.append(ChatMessage("user", f"[Image context received] {input_text}"))
         else:
-            raw_reply = await self.uag.reply(
-                messages=[*history, ChatMessage("user", input_text)], system_prompt=system_prompt
-            )
             history.append(ChatMessage("user", input_text))
         reply, asset = self._extract_media(raw_reply)
         history.append(ChatMessage("assistant", reply))
@@ -460,6 +478,29 @@ class MessageAssistant:
         )
         return reply, asset
 
+    async def _ask_model(
+        self,
+        *,
+        history: list[ChatMessage],
+        system_prompt: str,
+        input_text: str,
+        image_paths: tuple[Path, ...],
+    ) -> str:
+        if image_paths and self.settings.message_vision_enabled:
+            return await self.uag.reply_with_images(
+                messages=history,
+                system_prompt=system_prompt,
+                image_paths=image_paths,
+                prompt=input_text,
+            )
+        return await self.uag.reply(
+            messages=[*history, ChatMessage("user", input_text)], system_prompt=system_prompt
+        )
+
+    @staticmethod
+    def _is_voice_delivery_refusal(reply: str) -> bool:
+        return bool(VOICE_DELIVERY_REFUSAL.search(reply))
+
     def _message_system_prompt(self) -> str:
         return (
             f"{self.settings.system_prompt}\n\n"
@@ -471,6 +512,8 @@ class MessageAssistant:
             "them; "
             "never claim that you cannot listen to them. Write the answer only: the application, "
             "not you, handles text versus voice delivery. "
+            "When voice output is requested, answer the request normally and never claim that you "
+            "cannot send voice or audio; your answer is synthesized and delivered for you. "
             "Do not claim to generate images or videos. You may send one existing local media "
             "asset "
             "only by placing [[send_media:ASSET_ID]] at the very end of your response. "

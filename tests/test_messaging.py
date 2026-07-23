@@ -49,6 +49,19 @@ class FakeUAG:
         return "متن ویس"
 
 
+class VoiceRefusalUAG:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def reply(self, *, messages: list[ChatMessage], system_prompt: str) -> str:
+        self.calls += 1
+        assert messages[-1].content == "سلام"
+        if self.calls == 1:
+            return "متأسفم، امکان ارسال پاسخ صوتی ندارم."
+        assert "Do not say that you cannot send voice" in system_prompt
+        return "سلام، حالت چطوره؟"
+
+
 class FakeSynthesizer:
     async def synthesize(self, text: str, destination: Path) -> int:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -147,7 +160,11 @@ async def test_text_message_can_send_voice_and_requested_asset(tmp_path: Path) -
     assistant, client, store = make_assistant(tmp_path)
 
     reply, asset = await assistant._reply(
-        input_text="سلام", image_paths=(), trace_id="trace", conversation_id="message:11"
+        input_text="سلام",
+        image_paths=(),
+        response_mode=ResponseMode.VOICE,
+        trace_id="trace",
+        conversation_id="message:11",
     )
     assert reply == "این فایل برای شماست"
     assert asset and asset.asset_id == "guide"
@@ -161,6 +178,31 @@ async def test_text_message_can_send_voice_and_requested_asset(tmp_path: Path) -
 
     assert client.sent_files[0][1] is True
     assert client.sent_files[1][1] is False
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_voice_delivery_refusal_is_retried_as_content(tmp_path: Path) -> None:
+    assistant, _, store = make_assistant(tmp_path)
+    refusing_uag = VoiceRefusalUAG()
+    assistant.uag = refusing_uag  # type: ignore[assignment]
+
+    reply, asset = await assistant._reply(
+        input_text="سلام",
+        image_paths=(),
+        response_mode=ResponseMode.VOICE,
+        trace_id="voice-retry",
+        conversation_id="message:11",
+    )
+
+    assert reply == "سلام، حالت چطوره؟"
+    assert asset is None
+    assert refusing_uag.calls == 2
+    assert store.events_for_trace("voice-retry") == [
+        ("message.ai.started", "ok"),
+        ("message.ai.voice_delivery_retry", "ok"),
+        ("message.ai.completed", "ok"),
+    ]
     store.close()
 
 
