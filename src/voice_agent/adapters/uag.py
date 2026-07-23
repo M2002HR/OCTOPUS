@@ -95,12 +95,32 @@ class UAGClient:
         image_path: Path,
         prompt: str,
     ) -> str:
-        mime_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
-        encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+        return await self.reply_with_images(
+            messages=messages,
+            system_prompt=system_prompt,
+            image_paths=(image_path,),
+            prompt=prompt,
+        )
+
+    async def reply_with_images(
+        self,
+        *,
+        messages: Sequence[ChatMessage],
+        system_prompt: str,
+        image_paths: Sequence[Path],
+        prompt: str,
+    ) -> str:
+        if not image_paths:
+            raise UAGError("vision reply requires at least one image")
         content: list[dict[str, object]] = [
             {"type": "text", "text": prompt or "Describe this image and answer the user."},
-            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}},
         ]
+        for image_path in image_paths:
+            mime_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+            encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+            content.append(
+                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}}
+            )
         payload_messages: list[dict[str, object]] = [{"role": "system", "content": system_prompt}]
         payload_messages.extend({"role": item.role, "content": item.content} for item in messages)
         payload_messages.append({"role": "user", "content": content})

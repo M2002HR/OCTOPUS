@@ -43,6 +43,13 @@ class LibraryAsset:
     caption: str
 
 
+@dataclass(frozen=True, slots=True)
+class MessageContent:
+    kind: str
+    text: str
+    image_paths: tuple[Path, ...] = ()
+
+
 class MediaLibrary:
     """Manifest-backed local assets that the assistant may send but never generate."""
 
@@ -145,13 +152,15 @@ class MessageAssistant:
             )
         )
         try:
-            input_text, image_path = await self._extract_input(event, trace_id, conversation_id)
-            if input_text is None:
+            content = await self._extract_input(message, trace_id, conversation_id)
+            if content is None:
                 return
-            mode, input_text = self._response_mode(input_text)
+            mode, input_text = self._response_mode(content.text)
+            reply_context = await self._extract_reply_context(message, trace_id, conversation_id)
+            prompt = self._with_reply_context(input_text, reply_context)
             reply, asset = await self._reply(
-                input_text=input_text,
-                image_path=image_path,
+                input_text=prompt,
+                image_paths=(*content.image_paths, *reply_context.image_paths),
                 trace_id=trace_id,
                 conversation_id=conversation_id,
             )
@@ -177,7 +186,7 @@ class MessageAssistant:
                     trace_id=trace_id,
                     conversation_id=conversation_id,
                     input_kind=kind,
-                    input_text=input_text,
+                    input_text=prompt,
                     reply=reply,
                     response_mode=mode.value,
                     media_asset_id=asset.asset_id if asset else None,
@@ -240,9 +249,8 @@ class MessageAssistant:
         return mimetypes.guess_extension(mime_type or "") or fallback
 
     async def _extract_input(
-        self, event: events.NewMessage.Event, trace_id: str, conversation_id: str
-    ) -> tuple[str | None, Path | None]:
-        message = event.message
+        self, message: types.Message, trace_id: str, conversation_id: str
+    ) -> MessageContent | None:
         size = int(message.file.size or 0) if message.file else 0
         if size > self.settings.message_max_media_bytes:
             await self.client.send_message(
@@ -252,11 +260,11 @@ class MessageAssistant:
             self.audit.append(
                 Event("message.rejected", trace_id, conversation_id, details={"reason": "size"})
             )
-            return None, None
+            return None
         incoming = self.settings.runtime_dir / "messages" / "incoming" / trace_id
         if message.voice or message.audio:
             suffix = self._media_suffix(message, ".ogg")
-            path = await event.download_media(file=incoming / f"audio{suffix}")
+            path = await message.download_media(file=incoming / f"audio{suffix}")
             if not path:
                 raise RuntimeError("Telegram did not download the audio message")
             self.audit.append(Event("message.stt.started", trace_id, conversation_id))
@@ -271,19 +279,23 @@ class MessageAssistant:
                     details={"chars": len(text)},
                 )
             )
-            return text, None
+            return MessageContent(kind=self._kind(message), text=text)
         if message.photo or self._is_image_attachment(message):
-            path = await event.download_media(
+            path = await message.download_media(
                 file=incoming / f"photo{self._media_suffix(message, '.jpg')}"
             )
             if not path:
                 raise RuntimeError("Telegram did not download the photo")
-            return (message.message or "Describe this image."), Path(path)
+            return MessageContent(
+                kind="photo",
+                text=message.message or "Describe this image.",
+                image_paths=(Path(path),),
+            )
         if message.video or message.document:
             # Videos/documents are accepted as attachments and may carry a caption. They are not
             # sent to a vision model because Ajil's configured OpenAI-compatible contract supports
             # inline images only; this avoids falsely claiming frame-level video understanding.
-            path = await event.download_media(file=incoming)
+            path = await message.download_media(file=incoming)
             self.audit.append(
                 Event(
                     "message.attachment.received",
@@ -292,12 +304,107 @@ class MessageAssistant:
                     details={"kind": self._kind(message), "downloaded": bool(path)},
                 )
             )
-            return message.message or "I received an attachment without a caption.", None
+            return MessageContent(
+                kind=self._kind(message),
+                text=message.message or "I received an attachment without a caption.",
+            )
         text = (message.message or "").strip()
         if not text:
             await self.client.send_message(self.allowed_peer_id, "لطفاً متن، ویس یا تصویر بفرستید.")
-            return None, None
-        return text, None
+            return None
+        return MessageContent(kind="text", text=text)
+
+    async def _extract_reply_context(
+        self, message: types.Message, trace_id: str, conversation_id: str
+    ) -> MessageContent:
+        if not message.reply_to:
+            return MessageContent(kind="none", text="")
+        replied = await message.get_reply_message()
+        if replied is None:
+            self.audit.append(
+                Event("message.reply_context.unavailable", trace_id, conversation_id)
+            )
+            return MessageContent(kind="unavailable", text="")
+        size = int(replied.file.size or 0) if replied.file else 0
+        if size > self.settings.message_max_media_bytes:
+            self.audit.append(
+                Event(
+                    "message.reply_context.rejected",
+                    trace_id,
+                    conversation_id,
+                    details={"reason": "size", "kind": self._kind(replied)},
+                )
+            )
+            return MessageContent(
+                kind="oversize", text="[Referenced attachment exceeded the limit]"
+            )
+
+        incoming = self.settings.runtime_dir / "messages" / "incoming" / trace_id / "reply"
+        if replied.voice or replied.audio:
+            suffix = self._media_suffix(replied, ".ogg")
+            path = await replied.download_media(file=incoming / f"audio{suffix}")
+            if not path:
+                raise RuntimeError("Telegram did not download the replied audio message")
+            self.audit.append(Event("message.reply_context.stt.started", trace_id, conversation_id))
+            transcript = await self.uag.transcribe(
+                Path(path), language=self.settings.message_stt_language
+            )
+            self.audit.append(
+                Event(
+                    "message.reply_context.stt.completed",
+                    trace_id,
+                    conversation_id,
+                    details={"chars": len(transcript)},
+                )
+            )
+            content = MessageContent(kind="voice", text=transcript)
+        elif replied.photo or self._is_image_attachment(replied):
+            path = await replied.download_media(
+                file=incoming / f"photo{self._media_suffix(replied, '.jpg')}"
+            )
+            if not path:
+                raise RuntimeError("Telegram did not download the replied photo")
+            content = MessageContent(
+                kind="photo",
+                text=replied.message or "Referenced image.",
+                image_paths=(Path(path),),
+            )
+        elif replied.video or replied.document:
+            path = await replied.download_media(file=incoming)
+            content = MessageContent(
+                kind=self._kind(replied),
+                text=replied.message or "Referenced attachment without a caption.",
+            )
+            self.audit.append(
+                Event(
+                    "message.reply_context.attachment.received",
+                    trace_id,
+                    conversation_id,
+                    details={"kind": content.kind, "downloaded": bool(path)},
+                )
+            )
+        else:
+            content = MessageContent(kind="text", text=(replied.message or "").strip())
+
+        self.audit.append(
+            Event(
+                "message.reply_context.loaded",
+                trace_id,
+                conversation_id,
+                details={"kind": content.kind, "images": len(content.image_paths)},
+            )
+        )
+        return content
+
+    @staticmethod
+    def _with_reply_context(input_text: str, context: MessageContent) -> str:
+        if not context.text and not context.image_paths:
+            return input_text
+        reference = context.text or "[Referenced image without a caption]"
+        return (
+            f"[The user is replying to a {context.kind} message:]\n{reference}\n\n"
+            f"[New message:]\n{input_text}"
+        )
 
     def _response_mode(self, text: str) -> tuple[ResponseMode, str]:
         if TEXT_REQUEST.search(text):
@@ -312,7 +419,7 @@ class MessageAssistant:
         self,
         *,
         input_text: str,
-        image_path: Path | None,
+        image_paths: tuple[Path, ...],
         trace_id: str,
         conversation_id: str,
     ) -> tuple[str, LibraryAsset | None]:
@@ -320,14 +427,14 @@ class MessageAssistant:
         history[:] = history[-self.settings.max_history_messages :]
         system_prompt = self._message_system_prompt()
         self.audit.append(Event("message.ai.started", trace_id, conversation_id))
-        if image_path is not None and self.settings.message_vision_enabled:
-            raw_reply = await self.uag.reply_with_image(
+        if image_paths and self.settings.message_vision_enabled:
+            raw_reply = await self.uag.reply_with_images(
                 messages=history,
                 system_prompt=system_prompt,
-                image_path=image_path,
+                image_paths=image_paths,
                 prompt=input_text,
             )
-            history.append(ChatMessage("user", f"[Image received] {input_text}"))
+            history.append(ChatMessage("user", f"[Image context received] {input_text}"))
         else:
             raw_reply = await self.uag.reply(
                 messages=[*history, ChatMessage("user", input_text)], system_prompt=system_prompt
