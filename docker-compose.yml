@@ -44,15 +44,20 @@ services:
   voice-agent:
     build: .
     profiles: ["agent"]
+    restart: unless-stopped
     env_file: .env
     environment:
       UAG_BASE_URL: http://uag-gateway:8080
       RUNTIME_DIR: /runtime
       AUDIT_DATABASE_PATH: /runtime/voice_agent.sqlite3
       AUDIT_JSONL_PATH: /runtime/events.jsonl
+      TELEGRAM_PROXY_HOST: ${TELEGRAM_PROXY_HOST_DOCKER:-host.docker.internal}
+      TELEGRAM_PROXY_PORT: ${TELEGRAM_PROXY_PORT_DOCKER:-0}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./runtime:/runtime
     depends_on:
       uag-gateway:
         condition: service_healthy
-    command: ["--help"]
+    command: ["serve"]

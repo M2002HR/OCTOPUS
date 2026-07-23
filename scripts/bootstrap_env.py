@@ -21,6 +21,8 @@ TELEGRAM_KEYS = {
     "TELEGRAM_PROXY_USERNAME",
     "TELEGRAM_PROXY_PASSWORD",
     "TELEGRAM_PROXY_RDNS",
+    "TELEGRAM_PROXY_HOST_DOCKER",
+    "TELEGRAM_PROXY_PORT_DOCKER",
 }
 
 
@@ -55,6 +57,8 @@ def main() -> None:
             "AUDIT_JSONL_PATH": "runtime/events.jsonl",
             "VOICE_AGENT_ALLOWED_PEER_IDS": "121166433",
             "VOICE_AGENT_TEST_PEER_USERNAME": "we_are_waiting_for_him",
+            "VOICE_AGENT_INBOUND_ENABLED": "true",
+            "VOICE_AGENT_INBOUND_USERNAME": "we_are_waiting_for_him",
             "VOICE_AGENT_REQUIRE_DISCLOSURE": "true",
             "VOICE_AGENT_RECORDING_MODE": "transcript_only",
             "VOICE_AGENT_MAX_TURN_SECONDS": "45",
