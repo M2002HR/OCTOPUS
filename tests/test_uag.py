@@ -20,6 +20,8 @@ def make_client() -> UAGClient:
         providers=("groq",),
         transcription_provider="groq",
         transcription_models=("groq/whisper-large-v3-turbo",),
+        vision_models=("gemini/gemini-2.5-flash",),
+        vision_providers=("gemini",),
     )
 
 
@@ -78,6 +80,8 @@ async def test_vision_chat_uses_openai_data_url_content(tmp_path: Path) -> None:
 
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
+        assert payload["model"] == "gemini/gemini-2.5-flash"
+        assert payload["x_router"]["providers"] == ["gemini"]
         content = payload["messages"][-1]["content"]
         assert content[0] == {"type": "text", "text": "What is shown?"}
         assert content[1]["type"] == "image_url"

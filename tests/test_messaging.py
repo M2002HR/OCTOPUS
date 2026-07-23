@@ -75,8 +75,9 @@ def settings(tmp_path: Path) -> SimpleNamespace:
         message_media_library_dir=library,
         message_media_manifest=library / "manifest.json",
         max_history_messages=8,
-        message_default_response="voice",
+        message_default_response="text",
         message_vision_enabled=True,
+        message_stt_language=None,
         message_max_media_bytes=1000,
         language="fa",
         system_prompt="base prompt",
@@ -113,7 +114,7 @@ def test_media_library_allows_only_manifested_files_inside_root(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_text_message_defaults_to_voice_and_sends_requested_asset(tmp_path: Path) -> None:
+async def test_text_message_can_send_voice_and_requested_asset(tmp_path: Path) -> None:
     assistant, client, store = make_assistant(tmp_path)
 
     reply, asset = await assistant._reply(
@@ -131,6 +132,16 @@ async def test_text_message_defaults_to_voice_and_sends_requested_asset(tmp_path
 
     assert client.sent_files[0][1] is True
     assert client.sent_files[1][1] is False
+    store.close()
+
+
+def test_text_is_the_default_response_mode(tmp_path: Path) -> None:
+    assistant, _, store = make_assistant(tmp_path)
+
+    mode, prompt = assistant._response_mode("سلام")
+
+    assert mode is ResponseMode.TEXT
+    assert prompt == "سلام"
     store.close()
 
 
