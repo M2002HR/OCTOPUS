@@ -67,7 +67,8 @@ call time.
 | `UAG_TIMEOUT_SEC` | `45` | HTTP timeout per STT/chat request. |
 | `AI_CHAT_MODELS`, `AI_CHAT_PROVIDERS` | empty | Ajil chat routing choices. |
 | `AI_TRANSCRIPTION_PROVIDER`, `AI_TRANSCRIPTION_MODELS` | empty | Ajil STT provider configuration; the direct STT route selects its configured provider/model. |
-| `EDGE_TTS_VOICE`, `EDGE_TTS_RATE` | `fa-IR-DilaraNeural`, `+0%` | Edge TTS voice and rate. |
+| `EDGE_TTS_VOICE`, `EDGE_TTS_RATE` | `fa-IR-FaridNeural`, `+0%` | Male fallback Edge TTS voice and rate. |
+| `EDGE_TTS_VOICE_BY_LANGUAGE` | male Persian/Arabic/Turkish/English map | Optional comma-separated `language:voice` map selected from the reply script. |
 | `FFMPEG_BIN` | `ffmpeg` | Ogg/Opus conversion executable. |
 | `VOICE_AGENT_UAG_PORT` | `18081` | Host port for the Compose Ajil gateway. |
 | `UAG_PROXY_URL_DOCKER` | empty | Docker-reachable proxy URL for Ajil; separate from a host-loopback URL. |
@@ -101,5 +102,7 @@ through the SSH sidecar. All values, including the relay credential, are set fro
 ## Private messaging
 
 `VOICE_AGENT_MESSAGE_*` settings control the same persistent `serve` process's allowlisted private
-message assistant. Their semantics, privacy behavior, photo support, voice-first response policy,
-and local media-library contract are documented in [messaging.md](messaging.md).
+message assistant. Their semantics, privacy behavior, photo support, text-first response policy,
+and local media-library contract are documented in [messaging.md](messaging.md). The separate
+`VOICE_AGENT_VISION_MODELS` and `VOICE_AGENT_VISION_PROVIDERS` settings must select an
+image-capable Ajil provider/model; they are intentionally independent from normal text chat.

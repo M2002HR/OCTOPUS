@@ -74,9 +74,10 @@ Telegram call setup.
 ## Manual private-message test
 
 With `voice-agent` already running, use only the configured
-`VOICE_AGENT_MESSAGE_USERNAME` account. Send, in order: plain text (expect a voice note), `/text`
-followed by a question (expect text), a voice note or audio attachment (expect STT then a voice
-note), and a photo or image attachment with a question (expect a vision request then a voice note).
+`VOICE_AGENT_MESSAGE_USERNAME` account. Send, in order: plain text (expect text), `/voice`
+followed by a question (expect a voice note), a voice note or audio attachment (expect automatic
+language STT then text), and a photo or image attachment with a question (expect a Gemini vision
+request then text).
 Observe the content-free `message.*` events in `runtime/events.jsonl`. When transcript retention
 is authorized, query `message_turns` in the SQLite database for the stored transcript/reply pair.
 

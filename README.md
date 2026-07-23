@@ -56,7 +56,7 @@ STUN preflight procedure.
 ## Private messages
 
 The persistent service also handles text, voice notes, and photos from the one configured user.
-Replies are voice notes by default, with explicit `/text` and `/voice` overrides. It can send only
+Replies are text by default, with explicit `/voice` and `/text` overrides. It can send only
 approved existing images/videos from a local manifest; it never generates media. See
 [docs/messaging.md](docs/messaging.md).
 
