@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import httpx
@@ -66,5 +67,39 @@ async def test_chat_extracts_gateway_winner_and_rejects_errors() -> None:
         response = httpx.Response(502, request=httpx.Request("GET", "http://uag.test"))
         with pytest.raises(UAGError, match="HTTP 502"):
             client._expect_json(response)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_vision_chat_uses_openai_data_url_content(tmp_path: Path) -> None:
+    image = tmp_path / "input.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        content = payload["messages"][-1]["content"]
+        assert content[0] == {"type": "text", "text": "What is shown?"}
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+        return httpx.Response(
+            200,
+            json={"winner": {"payload": {"choices": [{"message": {"content": "تصویر"}}]}}},
+            request=request,
+        )
+
+    client = make_client()
+    await client.client.aclose()
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        assert (
+            await client.reply_with_image(
+                messages=[ChatMessage("user", "history")],
+                system_prompt="system",
+                image_path=image,
+                prompt="What is shown?",
+            )
+            == "تصویر"
+        )
     finally:
         await client.aclose()

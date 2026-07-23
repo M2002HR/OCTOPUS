@@ -60,3 +60,30 @@ def test_settings_requires_inbound_username(
     settings = Settings.load(tmp_path / "missing.env")
     with pytest.raises(ConfigurationError, match="INBOUND_USERNAME"):
         settings.validate_inbound_service()
+
+
+def test_settings_requires_message_username_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_ENABLED", "true")
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_USERNAME", "we_are_waiting_for_him")
+    monkeypatch.setenv("VOICE_AGENT_MESSAGE_ENABLED", "true")
+    monkeypatch.setenv("VOICE_AGENT_MESSAGE_USERNAME", "")
+    settings = Settings.load(tmp_path / "missing.env")
+
+    with pytest.raises(ConfigurationError, match="MESSAGE_USERNAME"):
+        settings.validate_inbound_service()
+
+
+def test_message_library_relative_paths_are_inside_runtime_volume(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime = tmp_path / "runtime"
+    monkeypatch.setenv("RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("VOICE_AGENT_MESSAGE_MEDIA_LIBRARY_DIR", "approved-assets")
+    monkeypatch.setenv("VOICE_AGENT_MESSAGE_MEDIA_MANIFEST", "approved-assets/index.json")
+
+    settings = Settings.load(tmp_path / "missing.env")
+
+    assert settings.message_media_library_dir == runtime / "approved-assets"
+    assert settings.message_media_manifest == runtime / "approved-assets" / "index.json"
