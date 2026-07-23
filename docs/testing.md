@@ -86,6 +86,11 @@ described in [Private messaging](messaging.md#local-image-and-video-sending). As
 clearly maps to that asset. Confirm `message.media.sent` and that Telegram receives the original
 file; no image/video generation path exists.
 
+Reply to a text message, a photo, and a voice note with a follow-up question. Confirm
+`message.reply_context.loaded` for text/photo references and `message.reply_context.stt.*` for the
+voice reference. The model prompt receives the referenced text/transcript and every referenced
+image, while the follow-up message alone chooses text versus voice output.
+
 ## What a successful live test proves
 
 `call.active` proves the PyTgCalls media connection completed. `telegram.raw.call_update` shows

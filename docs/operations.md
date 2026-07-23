@@ -26,6 +26,11 @@ is `message.service.ready`; normal processing is `message.received`, `message.st
 outbound files add `message.media.sent`. Under `transcript_only`, `message_turns` contains the
 content-bearing input and reply; protect it exactly like `conversation_turns`.
 
+Reply-aware processing records `message.reply_context.loaded` for quoted text/image/attachments and
+`message.reply_context.stt.*` when a quoted voice note is transcribed. These events contain only
+kind, image count, and transcript length; quoted content remains in SQLite only when transcript
+retention is enabled.
+
 ## Privacy boundaries
 
 `events.jsonl` contains no transcripts, replies, audio, call keys, signaling payloads, tokens, or

@@ -16,6 +16,19 @@ Inputs are handled as follows:
 | Photo or image attachment | Downloaded temporarily and supplied to Ajil as an OpenAI-compatible data-URL image part; the pinned Ajil Gemini adapter maps this to inline image data |
 | Video or document | Safely downloaded for audit/size validation; its caption is processed as text. Frame-level video analysis is intentionally not claimed because the configured Ajil contract does not upload video files to a vision API. |
 
+## Replies and quoted context
+
+When the user replies to an earlier Telegram message, that referenced message is included in the
+new request context. Referenced text and captions are labelled as quoted context; referenced photos
+are sent together with any new photo to the configured vision model; and referenced voice notes or
+audio attachments are downloaded temporarily and transcribed through Ajil STT before being added to
+the context. A referenced video/document contributes its caption only. The new message—not the
+quoted one—controls `/voice` or `/text` response mode.
+
+The same size limit applies independently to the quoted attachment. Missing, oversized, or
+unavailable quoted media is recorded in a content-free `message.reply_context.*` audit event and is
+not sent to a model. Temporary quoted files are deleted with the rest of the turn data.
+
 Incoming media and generated voice replies are deleted once delivery finishes. With
 `VOICE_AGENT_RECORDING_MODE=transcript_only`, text inputs/transcripts, replies, selected response
 mode, and sent library asset IDs are persisted in SQLite `message_turns`; JSONL events remain
