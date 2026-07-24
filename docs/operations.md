@@ -1,61 +1,148 @@
-# Operations and audit data
+# Observability, logs, audit, and retention
 
-## Routine commands
+## Observability planes
+
+| Plane | Store/transport | Content |
+| --- | --- | --- |
+| Control-plane state | PostgreSQL | Users, conversations, messages, jobs, results, threads, memory, artifacts |
+| Durable job events | PostgreSQL `job_events` | Ordered lifecycle, safe commentary/tool summaries, verification |
+| Live progress | Redis → Bot | Level-filtered safe events |
+| Service logs | Docker/stdout | Structured operational logs and error classes |
+| Voice audit | SQLite `audit_events` + JSONL | Content-free call/message/completion lifecycle |
+| Voice content | SQLite turn tables | Optional transcript/reply text under `transcript_only` |
+| Queue health | Redis Streams/groups | Pending, lag, delivery/recovery |
+
+## Telegram log levels
+
+Per-user `/logs` setting:
+
+- `off`: no live progress; durable history remains;
+- `error`: failures and terminal errors;
+- `info`: full normal lifecycle, tool summaries, and public Codex commentary;
+- `debug`: deepest safe public event detail.
+
+Private chain-of-thought/reasoning, credentials, raw environments, unrestricted subprocess streams,
+and provider request bodies are not forwarded at any level.
+
+`/logs JOB_ID [PAGE]` reads ordered durable events. `/history` combines prompts/results/events for
+the active owned session.
+
+## API and service health
 
 ```bash
-docker compose ps
-docker compose logs --tail=200 uag-gateway
-tail -f runtime/events.jsonl
-.venv/bin/python -c "import sqlite3; c = sqlite3.connect('runtime/voice_agent.sqlite3'); print(c.execute('SELECT name, status, count(*) FROM audit_events GROUP BY name, status ORDER BY name').fetchall())"
+curl --noproxy '*' http://127.0.0.1:18090/health
+curl --noproxy '*' http://127.0.0.1:18090/ready
+curl --noproxy '*' http://127.0.0.1:18090/version
+curl --noproxy '*' http://127.0.0.1:18090/config/redacted
+curl --noproxy '*' http://127.0.0.1:8080/health
+docker compose --profile agent ps
 ```
 
-The long-running container must show `Up` in `docker compose ps`. `restart: unless-stopped` keeps
-it running after a process or Docker daemon restart. The first successful startup records
-`inbound.service.ready`; an allowed call records `call.incoming.authorized`, then `call.active`.
-Unauthorized or concurrent calls record `call.incoming.rejected` and are discarded without entering
-the speech pipeline.
+Liveness means the API process runs. Readiness separately checks Ajil, PostgreSQL, and Redis.
+`/config/redacted` is the only configuration endpoint suitable for safe diagnostics.
 
-The agent emits an event for call requests, connection state, safe Telegram/PyTgCalls updates,
-turn receipt, STT, AI, TTS, persistence, completion, and errors. Every event has a timestamp,
-trace ID, call ID, optional turn ID, name, status, and safe metadata. JSONL is suitable for a log
-collector; SQLite is suitable for indexed debugging and aggregate analysis.
+## Job events
 
-The message assistant uses the same audit pipeline with `message.*` event names. Its startup event
-is `message.service.ready`; normal processing is `message.received`, `message.stt.*` or
-`message.ai.*`, `message.voice.sent` or `message.text.sent`, and `message.completed`. Approved
-outbound files add `message.media.sent`. Under `transcript_only`, `message_turns` contains the
-content-bearing input and reply; protect it exactly like `conversation_turns`.
+Each job event has job ID, monotonic sequence, type, level, message, safe structured data, and
+timestamp. Typical flow:
 
-Reply-aware processing records `message.reply_context.loaded` for quoted text/image/attachments and
-`message.reply_context.stt.*` when a quoted voice note is transcribed. These events contain only
-kind, image count, and transcript length; quoted content remains in SQLite only when transcript
-retention is enabled.
+```text
+job.received -> job.planned -> job.queued -> job.running
+  -> Codex thread/turn/tool/agentMessage events
+  -> artifact/verification events
+  -> job.completed | job.failed | job.cancelled | job.interrupted
+  -> completion_call.* publication event when eligible
+```
+
+Heartbeat/lease events diagnose dead workers. Persisted order is authoritative; Telegram edit order
+is presentation only.
+
+## Voice events
+
+Normal call events include service readiness, authorization/rejection, call state, media/turn
+receipt, STT/chat/TTS stages, playback, persistence, hangup, cleanup, and error.
+
+Private messages use `message.*`, including reply-context and media events. Completion calls use
+`completion_call.consumer.ready`, attempt/failure, requested, active, delivered,
+duplicate-suppressed, invalid-payload, and exhausted.
+
+Completion audit stores job/call IDs, category, attempt, repeat count, duration, numeric target, and
+error type. It deliberately excludes the generated spoken status.
+
+Routine voice inspection:
+
+```bash
+tail -f runtime/events.jsonl
+.venv/bin/python -c \
+  "import sqlite3; c=sqlite3.connect('runtime/voice_agent.sqlite3'); print(c.execute('SELECT name,status,count(*) FROM audit_events GROUP BY name,status ORDER BY name').fetchall())"
+```
+
+## Redis queue monitoring
+
+```bash
+docker compose exec -T redis redis-cli -n 1 \
+  XINFO GROUPS telegram_codex_agent.jobs
+docker compose exec -T redis redis-cli -n 1 \
+  XPENDING telegram_codex_agent.jobs telegram_codex_agent.workers
+docker compose exec -T redis redis-cli -n 1 \
+  XINFO GROUPS telegram_codex_agent.completion_calls
+docker compose exec -T redis redis-cli -n 1 \
+  XPENDING telegram_codex_agent.completion_calls voice_agent.completion_calls
+```
+
+Idle healthy queues normally have no pending and no lag. A pending entry during active execution is
+normal. Recovery claims stale entries and reconciles database/dedup state.
 
 ## Privacy boundaries
 
-`events.jsonl` contains no transcripts, replies, audio, call keys, signaling payloads, tokens, or
-Telegram session strings. `conversation_turns`, enabled by `transcript_only`, contains transcript
-and reply text and must be treated as sensitive. It records paths for diagnosis, but live-call
-media is removed on shutdown. `off` prevents new transcript/reply rows while retaining operational
-events.
+Content-bearing sensitive stores:
 
-Keep filesystem permissions restrictive. Back up the database only when policy permits it. Use
-encrypted host or volume storage if encryption at rest is required, define a retention/deletion
-job outside the application, and document who is allowed to query transcripts.
+- PostgreSQL messages, job objectives/results, conversation summaries, memory;
+- SQLite `conversation_turns` and `message_turns` when enabled;
+- artifact files and ignored live-test media;
+- Codex home/browser profile outside application storage.
 
-## Incident response
+Content-free/safe-by-design operational stores:
 
-1. Stop the call with `Ctrl-C` or the process supervisor; it attempts a Telegram hangup and removes
-   active-call media folders.
-2. Save the relevant event trace IDs and error type, not secrets or signaling bytes.
-3. Check Ajil health and its container logs.
-4. Determine whether another client owns the Telegram session.
-5. For media failures, give the network operator the exception class and timestamp, then check
-   outbound Telegram VoIP connectivity. Do not publish credentials while debugging.
+- voice JSONL;
+- redacted service logs;
+- completion-call audit;
+- API redacted configuration.
+
+Paths, URLs, error strings, and custom metadata still require sanitization because they can embed
+secrets. The application never persists call encryption keys, signaling bytes, session strings,
+Bot/provider tokens, proxy passwords, or authorization headers.
+
+## Retention and backup
+
+`artifacts.retention_days` and `expires_at` describe artifact policy, but the disabled scheduler
+means an external cleanup job is required. PostgreSQL, Redis AOF, SQLite, JSONL, artifacts, and
+ignored runtime media each need explicit retention.
+
+`VOICE_AGENT_RECORDING_MODE=off` prevents new transcript/reply rows while retaining operational
+events. Both modes delete live call media during cleanup.
+
+Back up content only when policy allows it. Use encrypted storage, least-privilege database access,
+and tested restore. Never put backups into Git.
 
 ## Performance diagnosis
 
-The event timings distinguish capture/VAD latency from STT, chat, and TTS latency. Start by
-checking `VOICE_AGENT_VAD_END_SILENCE_MS`, then Ajil provider latency, then Edge TTS/ffmpeg.
-Keep history bounded with `VOICE_AGENT_MAX_HISTORY_MESSAGES`. Use aggregate queries by event name
-and timestamps; avoid exporting content-bearing transcript rows unless necessary.
+- Bot delays: Telegram proxy/API latency and progress edit throttle.
+- Queue delays: Redis lag, worker availability, PostgreSQL leases.
+- Codex delays: App Server startup, model/reasoning/Fast choice, tool subprocesses, quota.
+- Ajil delays: router candidates, provider retries/timeouts.
+- Voice response delays: VAD end silence, STT, chat, TTS, media playback.
+- Completion-call delays: Ajil wording, active-call busy retries, TTS, answer/connect time.
+
+Correlate timestamps rather than increasing timeouts blindly.
+
+## Incident handling
+
+1. Stop dangerous work with `/stop` or stop the smallest affected service.
+2. Preserve job/call IDs, event sequences, timestamps, queue state, and error classes.
+3. Check readiness and single primary Telethon ownership.
+4. Rotate any credential suspected of exposure.
+5. Restore service and let deterministic recovery reconcile state.
+6. Verify cleanup, queues, and a read-only smoke task.
+
+See [Runbook](RUNBOOK.md) and [Troubleshooting](troubleshooting.md).

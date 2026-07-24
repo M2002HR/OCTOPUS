@@ -1,64 +1,175 @@
 # Troubleshooting
 
-## Configuration or startup failures
+## Platform does not become ready
+
+```bash
+docker compose --profile agent ps
+docker compose --profile agent logs --tail=300 \
+  postgres redis ajil_gateway agent-migrate agent-api agent-bot agent-worker
+curl --noproxy '*' http://127.0.0.1:18090/ready
+```
 
 | Symptom | Check | Resolution |
 | --- | --- | --- |
-| Missing Telegram configuration | `ConfigurationError` before connection | Set API ID, API hash, and string session in the root `.env`. |
-| Proxy configuration failure | error mentions proxy host/port | If the proxy is enabled, provide both a host and a positive port. |
-| Container cannot reach `127.0.0.1` proxy | Telethon retries a loopback proxy connection | Set `TELEGRAM_PROXY_HOST_DOCKER` and `TELEGRAM_PROXY_PORT_DOCKER` to the endpoint exposed to Docker; `127.0.0.1` inside a container is not the host. |
-| VAD configuration failure | error mentions `CONTINUE_RMS` | Keep continuation RMS less than or equal to start RMS. |
-| Ajil does not become healthy | `docker compose logs uag-gateway` | Check root `UAG_*` values, Docker proxy reachability, provider credentials, and nested submodule checkout. |
-| STT returns provider/model errors | inspect Ajil logs and `AI_TRANSCRIPTION_*` | Configure the actual Ajil STT provider/model in root `.env`; the agent sends the language hint to the direct STT route. |
-| TTS fails | run `ffmpeg -version` and inspect error event | Install/configure `FFMPEG_BIN`, then verify selected Edge TTS voice and network access. |
+| PostgreSQL unhealthy | password, port, volume, `pg_isready` | Keep `POSTGRES_*` and `DATABASE_URL` consistent; protect existing volume |
+| Migration failed | `agent-migrate` logs | Fix forward migration/config; do not delete data or rewrite applied migration |
+| Redis unhealthy | AOF/volume/port logs | Restore Redis, then reconcile Streams against PostgreSQL |
+| Ajil unhealthy | provider/proxy/Redis/submodule logs | Initialize recursive submodules and validate root `UAG_*` |
+| API live but not ready | `/ready` check map | Restore only failed dependency |
+| Wrong Compose names/ports | rendered config | Use `docker compose --profile agent config`, not stale `uag-gateway` examples |
 
-## Speech timing problems
+## Bot is silent
 
-If replies start too late, lower `VOICE_AGENT_VAD_END_SILENCE_MS` gradually. If callers are cut off
-at natural pauses, raise it. For noise-triggered turns, increase start RMS and minimum utterance
-duration. For clipped initial words, increase pre-roll. See the [VAD guide](voice-turn-detection.md)
-for ranges and use one setting change per test.
+- Confirm `agent-bot` is running and only one poller uses the Bot token.
+- Validate `TELEGRAM_BOT_TOKEN`, user/chat allowlists, polling/webhook choice, and Bot proxy.
+- Polling is default. Webhook requires a public URL and secret.
+- Inspect Bot logs for Telegram 401/409/proxy errors.
+- Restart Bot after token/proxy/transport/global-policy change.
+
+Settings persist only after the Bot has registered the user through a normal message/job. If a
+button says “Send one task first,” create the context first.
+
+## Workspace/session/task problems
+
+| Symptom | Cause/check |
+| --- | --- |
+| “Select a workspace” | Use `/projects`; arbitrary Telegram paths are rejected |
+| Project missing | Check `WORKSPACE_ROOT_HOST` mount, `workspace.max_depth`, Git directory, registry |
+| Resume thread unavailable | Verify owner/project scope and persisted `codex_threads` |
+| Session says RUNNING forever | Inspect latest job heartbeat, Redis pending, worker logs |
+| History/log missing | Confirm correct user/chat/session and pagination |
+| Attachment unavailable | Check deterministic inbox path, download error, size, MIME, containment |
+
+## Codex App Server
+
+```bash
+agentctl codex status
+agentctl codex smoke
+docker compose --profile agent logs --tail=300 agent-worker
+```
+
+| Symptom | Resolution |
+| --- | --- |
+| Binary missing | Check `CODEX_HOST_RUNTIME`, `CODEX_BINARY`, container `PATH` |
+| Not authenticated | Verify protected `CODEX_HOME_HOST` mount and host Codex login |
+| Outbound request timeout | Configure `CODEX_HTTP_PROXY_URL`; it is separate from Bot/Telethon/Ajil |
+| Model/effort did not change | Confirm preference via `/status`; it applies to newly created jobs/turns |
+| Fast cannot enable | Model catalog unavailable or selected model does not advertise Fast |
+| Approval request hangs | Inspect deterministic approval bridge/policy; never leave App Server request unanswered |
+| Cancellation does not finish | Confirm persisted `cancel_requested`, thread/turn IDs, and `turn/interrupt` |
+| Weekly usage unavailable | `/usage` depends on `account/rateLimits/read`, not thread token events |
+| Rate limit/auth error | Treat as terminal category; do not retry indefinitely |
+
+## Job queue and restart recovery
+
+Inspect Redis groups and PostgreSQL job state. A pending entry with an active heartbeat is normal.
+If worker died, restart it and let pending reclaim/lease recovery run. Terminal database state
+wins; do not manually duplicate Stream entries.
+
+If Redis publish failed after job creation, the database row is still authoritative. Use the
+recovery/republish path rather than creating a second user job.
+
+## Browser/artifact
+
+- Confirm project actually has browser/Chrome Lab/Playwright tooling.
+- Check `CHROME_CDP_ENDPOINT` and dedicated browser profile.
+- Confirm application URL/process is reachable from worker host network.
+- A screenshot directive must be absolute, exist, stay inside approved roots, and fit upload cap.
+- Do not claim success from an empty/error-page screenshot; inspect it.
+- On cancellation, check no server/browser subprocess remains.
+
+## Ajil, STT, and TTS
+
+| Symptom | Check |
+| --- | --- |
+| Ajil provider/model error | gateway `/health`, provider keys, models/providers, router retries |
+| STT error | `AI_TRANSCRIPTION_*`, Groq STT model/language, audio format |
+| Vision error | `VOICE_AGENT_VISION_*` selects an image-capable Gemini model/provider |
+| Edge TTS error | selected voice, network, FFmpeg executable |
+| Temporary 5xx/504 | bounded retry where implemented; do not turn an integration failure into success |
+
+## Codex completion call
+
+### No call after job stops
+
+Check:
+
+1. job used Codex;
+2. user enabled `/completion_call on` before job creation;
+3. global `CODEX_COMPLETION_CALLS_ENABLED=true`;
+4. target numeric Bot user ID is in `VOICE_AGENT_ALLOWED_PEER_IDS`;
+5. worker recorded `completion_call.queued` rather than skipped/failed;
+6. voice consumer is ready and stream/group names match;
+7. primary Telethon session is connected and exclusively owned.
+
+```bash
+docker compose --profile agent logs --tail=300 agent-worker voice-agent
+docker compose exec -T redis redis-cli -n 1 \
+  XINFO GROUPS telegram_codex_agent.completion_calls
+docker compose exec -T redis redis-cli -n 1 \
+  XPENDING telegram_codex_agent.completion_calls voice_agent.completion_calls
+```
+
+### Pending does not clear after restart
+
+Pending younger than the 30-second stale-claim window is expected briefly. The consumer checks
+`XAUTOCLAIM` on every poll, so it should recover once stale. Confirm service remains running and
+stream/group match. Do not manually acknowledge before checking whether the call occurred.
+
+### Duplicate call after crash
+
+Normal duplicates are suppressed. A process crash after audible playback but before setting the
+delivered marker can cause one recovered repeat; this is the documented at-least-once boundary.
+
+### Call retries as busy
+
+An inbound/normal/completion call already owns the media engine. Wait for it to end; bounded retry
+will continue. Increasing attempts without addressing a permanently busy owner is not a fix.
+
+### Message wrong/not three times
+
+The request schema fixes repeat count to three and TTS uses one Ajil/fallback message repeated in
+one payload. Inspect job source/category and run the live recording/STT harness. Voice audit
+intentionally does not contain the spoken text.
+
+## Voice startup/configuration
+
+| Symptom | Resolution |
+| --- | --- |
+| Missing API/session | Fill primary `TELEGRAM_API_ID/HASH/STRING_SESSION` in root `.env` |
+| Proxy loopback from container | Use Docker host endpoint values, not `127.0.0.1` |
+| Caller rejected | Username must resolve at startup and numeric ID must be allowlisted |
+| Non-English config rejected | Telethon call/message language is intentionally enforced to `en` |
+| VAD invalid | continuation RMS ≤ start RMS; respect validation minimums |
+| Service restart loop | inspect credentials, allowlist resolution, Ajil/TTS intro generation |
 
 ## Telegram VoIP handshake and media
 
-### The persistent service does not accept a call
+### Stuck at “Exchanging encryption keys”
 
-Check `docker compose ps` and `docker compose logs --tail=200 voice-agent`. The service requires
-`VOICE_AGENT_INBOUND_ENABLED=true`, a non-empty `VOICE_AGENT_INBOUND_USERNAMES`, and every
-resolved user ID in `VOICE_AGENT_ALLOWED_PEER_IDS`. It accepts resolved numeric IDs, not display
-names.
-Calls from all other accounts are intentionally declined. After changing the configured username,
-restart `voice-agent` so it resolves the new identity.
+The primary authorization is probably active in another Telethon client/process. Stop the
+conflicting owner. Never run two call clients on one string session.
 
-### Another process uses the same session
+### Signaling works but `call.active` does not
 
-Telegram delivers private-call updates to the active owner of a user authorization. If a dashboard
-or another Telethon client uses the exact same `TELEGRAM_STRING_SESSION`, the agent can ring the
-peer but fail to receive the acceptance/signaling updates. Symptoms often include remaining on
-“Exchanging encryption keys.”
+PyTgCalls media is independent from Telethon proxy signaling. Run the overlay STUN preflight inside
+the voice namespace and inspect media sidecars. Permit required outbound UDP/TCP fallback without
+opening broad inbound rules.
 
-Stop only the conflicting process/container for the manual test, run the agent, then restore it.
-For a durable deployment, create and authorize a dedicated Telegram session for the voice agent.
-Do not run two concurrent private-call clients on one session.
+### Call active but speech is missed
 
-### Signaling arrives but `call.active` never appears
+Inspect frame/turn/STT events. Tune VAD one value at a time:
 
-If audit logs show `telegram.raw.call_update` and one or more
-`telegram.raw.call_update`/`UpdatePhoneCallSignalingData` events but the process raises
-`ntgcalls.TelegramServerError` before `call.active`, session ownership has been fixed but the
-media transport did not connect. PyTgCalls/NTgCalls uses Telegram VoIP servers independently of
-the Telethon signaling transport. A SOCKS proxy that handles TCP signaling does not automatically
-tunnel the media path.
+- clipped beginning: increase pre-roll;
+- ignored quiet voice: lower start/continue RMS;
+- noise turns: raise RMS/minimum utterance;
+- replies too late: lower end silence;
+- mid-sentence interruption: raise end silence.
 
-Ask the network operator to permit outbound Telegram VoIP reflector traffic, including the UDP
-path and its required TCP fallback, and test from the same host/container network namespace. Do
-not open broad inbound firewall rules: the agent only needs outbound connectivity. After a network
-change, rerun the manual live-call test with the competing session owner stopped. A successful
-test must produce `call.active`, inbound `StreamFrames`/turn events, and a heard TTS reply.
+See [Voice turn detection](voice-turn-detection.md).
 
 ## Audit investigation
 
-Use the call ID and trace ID from JSONL to query `audit_events`. Error events expose only an error
-class, intentionally. Do not add raw request bodies, signaling data, keys, session values, or
-transcript text to the JSONL stream to make diagnosis easier; use the protected SQLite transcript
-table only if transcript retention is enabled and authorized.
+Use trace/job/call IDs and timestamps. Do not add raw prompts, transcript, signaling, keys, session
+values, or provider bodies to JSONL to simplify debugging. Query protected content stores only when
+authorized. Rotate credentials immediately if they appear in any artifact/log/chat.

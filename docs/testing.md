@@ -1,99 +1,154 @@
 # Testing and verification
 
-Testing is layered so a failure identifies the smallest faulty boundary.
+Testing is layered so a failure identifies the smallest boundary. External tests are never implied
+by unit success.
 
-## Fast automated suite
-
-```bash
-.venv/bin/ruff check .
-.venv/bin/mypy src
-.venv/bin/pytest -q
-docker compose config --quiet
-```
-
-The tests cover configuration validation, allowlist behavior, PCM turn construction (including
-pre-roll, hysteresis, noise rejection, silence completion, duration calculation, and maximum
-length), orchestration event order, transcript-retention policy, Ajil request contracts, Edge TTS
-adapter behavior, storage, Telegram-session policy, message response-mode selection, media-library
-path containment, audio/image attachment classification, and the image-chat data-URL contract.
-
-## Real STT → AI → TTS smoke test
-
-Start Ajil and point the host process to the published port:
+## Deterministic suite
 
 ```bash
-docker compose up -d --wait uag-gateway
-UAG_BASE_URL=http://127.0.0.1:18081 \
-  .venv/bin/telegram-voice-agent process-file runtime/verification/edge-smoke.ogg --language en
+RUFF_CACHE_DIR=/tmp/octopus-ruff-cache ruff check src tests tests_agent scripts
+PYTHONPYCACHEPREFIX=/tmp/octopus-pycache \
+  python -m compileall -q src scripts tests tests_agent
+python -m mypy src
+python -m pytest -q
+docker compose --profile agent config --quiet
+git diff --check
 ```
 
-Success means the command prints a generated reply and an Ogg/Opus path. Inspect the recent
-content-free events with `tail -f runtime/events.jsonl` and query SQLite only when authorized.
+Run in Python 3.12/container when the host differs. Tests cover configuration, state transitions,
+repositories, queue/recovery, Codex contracts, Bot commands/callbacks, normalization, settings,
+memory, artifacts, VAD/audio, Ajil adapters, Telethon authorization, messages/replies, and
+completion calls.
+
+## Infrastructure and smoke tests
+
+```bash
+docker compose up -d --wait postgres redis ajil_gateway
+make doctor
+make ajil-smoke
+make codex-smoke
+```
+
+Codex smoke is read-only. Agent readiness:
+
+```bash
+curl --noproxy '*' -fsS http://127.0.0.1:18090/ready
+curl --noproxy '*' -fsS http://127.0.0.1:8080/health
+```
+
+## STT → Ajil → TTS without a call
+
+```bash
+UAG_BASE_URL=http://127.0.0.1:8080 \
+  .venv/bin/telegram-voice-agent \
+  process-file runtime/verification/edge-smoke.ogg --language en
+```
+
+Success proves input decoding, English STT, Ajil chat, Edge TTS, and Ogg/Opus generation, not
+Telegram signaling/media.
+
+## Bot/Codex live scenario
+
+Use only an approved test Telegram identity:
+
+1. `/start`;
+2. select an approved project;
+3. verify model/reasoning/Fast/permissions/language settings;
+4. `/new`;
+5. submit a read-only Codex task;
+6. confirm public intermediate commentary;
+7. inspect `/status`, `/usage`, `/history`, `/jobs`, and `/logs`;
+8. cancel a bounded test and confirm `turn/interrupt`;
+9. request a workspace screenshot and verify Telegram attachment.
+
+Test text, voice note, image, document/video metadata, and reply input independently.
 
 ## UDP overlay preflight
-
-Before a live call, provision and start the media overlay:
 
 ```bash
 python3 scripts/provision_media_relay.py
 docker compose --profile agent up -d --build
-docker compose --profile agent ps
+docker compose --profile agent exec -T voice-agent \
+  python /app/scripts/media_overlay_stun_probe.py
 ```
 
-All of `voice-media-ssh-tunnel`, `voice-media-tunnel`, and `voice-agent` must be running; the
-first two must be healthy. The deployment's acceptance criterion is a STUN binding request that
-returns through the overlay. It proves the complete required path: GOST UDP, the SSH forward,
-HTTP CONNECT through the Docker-facing endpoint for host port `3128`, and the remote UDP egress.
-Run `docker compose --profile agent exec -T voice-agent python
-/app/scripts/media_overlay_stun_probe.py`; it must pass. Do not bypass the proxy with a direct
-remote relay connection.
+Voice/media sidecars must be healthy. Passing proves the in-namespace GOST UDP → SSH → HTTP
+CONNECT → remote UDP path.
 
-## Manual inbound live-call test
+## Manual inbound voice
 
-1. Confirm the test peer’s numeric ID is in `VOICE_AGENT_ALLOWED_PEER_IDS`.
-2. Stop every other process/container using the same `TELEGRAM_STRING_SESSION`; do not delete
-   its session.
-3. Ensure the test peer has consented and will answer.
-4. In one terminal, tail events: `tail -f runtime/events.jsonl`.
-5. Start the persistent server:
+1. Confirm test peer numeric ID and username policy.
+2. Ensure only `voice-agent` owns the primary session.
+3. Tail `runtime/events.jsonl`.
+4. Call primary from the approved second account.
+5. Confirm “Hello, yes?” in English.
+6. Speak short, paused, quiet, and multi-turn English utterances.
+7. Confirm each complete turn reaches STT/chat/TTS/playback without repeated “not understood.”
+8. Hang up and confirm media cleanup.
 
-   ```bash
-   docker compose --profile agent up -d
-   docker compose logs -f voice-agent
-   ```
+`call.active` plus received frames/turns and heard TTS prove real media. Signaling updates alone do
+not.
 
-6. From the configured inbound username, call the agent account. A different Telegram account must
-   be declined. Speak a short sentence, a sentence with a natural mid-sentence pause, and a quiet sentence.
-   Confirm one answer arrives after each completed turn, without lost initial syllables.
-7. Stop with `docker compose --profile agent stop voice-agent`; verify `voip.hangup` and call
-   cleanup events, then restore any paused service that used the session.
+## Private message matrix
 
-Do not call arbitrary usernames as a test. The numeric allowlist is intentionally enforced before
-Telegram call setup.
+From the configured account send:
 
-## Manual private-message test
+- plain text and `/text`;
+- `/voice` request;
+- voice note/audio;
+- photo with question;
+- reply to text, photo, and voice note;
+- approved media-library request;
+- oversized/unsupported attachment negative cases.
 
-With `voice-agent` already running, use only the configured
-`VOICE_AGENT_MESSAGE_USERNAME` account. Send, in order: plain text (expect text), `/voice`
-followed by a question (expect a voice note), a voice note or audio attachment (expect automatic
-language STT then text), and a photo or image attachment with a question (expect a Gemini vision
-request then text).
-Observe the content-free `message.*` events in `runtime/events.jsonl`. When transcript retention
-is authorized, query `message_turns` in the SQLite database for the stored transcript/reply pair.
+Confirm response mode, vision/STT context, reply association, audit events, and temporary-file
+cleanup.
 
-To test outbound image/video delivery, first add an authorized local file and its manifest entry as
-described in [Private messaging](messaging.md#local-image-and-video-sending). Ask a question that
-clearly maps to that asset. Confirm `message.media.sent` and that Telegram receives the original
-file; no image/video generation path exists.
+## Completion-call live test
 
-Reply to a text message, a photo, and a voice note with a follow-up question. Confirm
-`message.reply_context.loaded` for text/photo references and `message.reply_context.stt.*` for the
-voice reference. The model prompt receives the referenced text/transcript and every referenced
-image, while the follow-up message alone chooses text versus voice output.
+`scripts/completion_call_live_test.py` drives the real Bot/Codex/call flow with the second Telethon
+session:
 
-## What a successful live test proves
+1. enable `/completion_call on`;
+2. select project and submit a real Codex task;
+3. wait for primary call and answer;
+4. record PCM;
+5. confirm automatic hangup;
+6. transcribe with bounded retry;
+7. verify repetition;
+8. check job/voice events and Redis pending/lag.
 
-`call.active` proves the PyTgCalls media connection completed. `telegram.raw.call_update` shows
-that Telegram call signaling reached the owning session, but by itself does not prove media
-connectivity. If the call remains at encryption-key exchange or errors before `call.active`, use
-[Troubleshooting](troubleshooting.md#telegram-voip-handshake-and-media).
+The primary session remains inside `voice-agent`. Do not use the historical main-user username as
+the live test target.
+
+Automated completion tests additionally cover every terminal category, redaction, fallback,
+exact-three schema, atomic publish/dedup, retry, invalid payload, audit privacy, and fast-restart
+pending recovery.
+
+## Restart recovery
+
+For a disposable job/call:
+
+- stop/restart worker during an active job and confirm lease/pending reconciliation;
+- restart voice after completion request delivery and confirm stale pending claim;
+- verify authoritative PostgreSQL terminal state is unchanged;
+- verify completion queue converges to pending/lag zero;
+- accept that crash after audible call but before delivered marker may cause an at-least-once
+  repeat.
+
+## Evidence and claims
+
+Record command, commit, environment/version, pass count, approved identities in redacted form,
+job/call IDs, safe event sequence, durations/hashes, service health, and queue state. Keep audio and
+screenshots under ignored runtime paths.
+
+Do not claim:
+
+- media success from signaling only;
+- semantic memory because an embedding column exists;
+- Playwright success without inspected browser evidence;
+- exactly-once completion calls across Telegram/process crash;
+- mypy success when mypy itself crashes;
+- clean full-repository lint when only changed files passed.
+
+See [Test matrix](TEST_MATRIX.md).
