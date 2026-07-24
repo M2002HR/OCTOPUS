@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from telethon import TelegramClient
+from telethon.network.connection import ConnectionTcpMTProxyIntermediate
 from telethon.sessions import StringSession
 from telethon.tl import types
 
@@ -24,23 +25,40 @@ class TelethonSession:
 
     def __init__(self, settings: Settings) -> None:
         settings.validate_telegram()
-        proxy: dict[str, object] | None = None
+        proxy: object | None = None
+        connection = None
         if settings.telegram_proxy_enabled:
-            proxy = {
-                "proxy_type": settings.telegram_proxy_type,
-                "addr": settings.telegram_proxy_host,
-                "port": settings.telegram_proxy_port,
-                "rdns": settings.telegram_proxy_rdns,
-            }
-            if settings.telegram_proxy_username:
-                proxy["username"] = settings.telegram_proxy_username
-            if settings.telegram_proxy_password:
-                proxy["password"] = settings.telegram_proxy_password
+            if settings.telegram_proxy_type.casefold() == "mtproxy":
+                if not settings.telegram_proxy_password:
+                    raise TelegramSafetyError(
+                        "MTProxy requires TELEGRAM_PROXY_PASSWORD as its secret"
+                    )
+                # Telethon expects (host, port, secret) for an MTProxy connection.
+                proxy = (
+                    settings.telegram_proxy_host,
+                    settings.telegram_proxy_port,
+                    settings.telegram_proxy_password,
+                )
+                connection = ConnectionTcpMTProxyIntermediate
+            else:
+                proxy = {
+                    "proxy_type": settings.telegram_proxy_type,
+                    "addr": settings.telegram_proxy_host,
+                    "port": settings.telegram_proxy_port,
+                    "rdns": settings.telegram_proxy_rdns,
+                }
+                if settings.telegram_proxy_username:
+                    proxy["username"] = settings.telegram_proxy_username
+                if settings.telegram_proxy_password:
+                    proxy["password"] = settings.telegram_proxy_password
+        client_kwargs: dict[str, object] = {"proxy": proxy}
+        if connection is not None:
+            client_kwargs["connection"] = connection
         self.client = TelegramClient(
             StringSession(settings.telegram_string_session),
             settings.telegram_api_id,
             settings.telegram_api_hash,
-            proxy=proxy,
+            **client_kwargs,
         )
         self.allowed_peer_ids = settings.allowed_peer_ids
 
