@@ -54,8 +54,9 @@ services:
         PIP_EXTRA_INDEX_URL: ${UAG_PIP_EXTRA_INDEX_URL:-}
     profiles: ["agent"]
     restart: unless-stopped
-    network_mode: "service:voice-media-tunnel"
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       UAG_BASE_URL: http://uag-gateway:8080
       RUNTIME_DIR: /runtime
@@ -67,8 +68,6 @@ services:
       - ./runtime:/runtime
     depends_on:
       uag-gateway:
-        condition: service_healthy
-      voice-media-tunnel:
         condition: service_healthy
     command: ["serve"]
 
