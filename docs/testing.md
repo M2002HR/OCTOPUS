@@ -24,7 +24,7 @@ Start Ajil and point the host process to the published port:
 ```bash
 docker compose up -d --wait uag-gateway
 UAG_BASE_URL=http://127.0.0.1:18081 \
-  .venv/bin/telegram-voice-agent process-file runtime/verification/edge-smoke.ogg --language fa
+  .venv/bin/telegram-voice-agent process-file runtime/verification/edge-smoke.ogg --language en
 ```
 
 Success means the command prints a generated reply and an Ogg/Opus path. Inspect the recent

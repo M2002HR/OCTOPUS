@@ -24,8 +24,9 @@ for ranges and use one setting change per test.
 ### The persistent service does not accept a call
 
 Check `docker compose ps` and `docker compose logs --tail=200 voice-agent`. The service requires
-`VOICE_AGENT_INBOUND_ENABLED=true`, a non-empty `VOICE_AGENT_INBOUND_USERNAME`, and that resolved
-user ID in `VOICE_AGENT_ALLOWED_PEER_IDS`. It accepts the resolved numeric ID, not a display name.
+`VOICE_AGENT_INBOUND_ENABLED=true`, a non-empty `VOICE_AGENT_INBOUND_USERNAMES`, and every
+resolved user ID in `VOICE_AGENT_ALLOWED_PEER_IDS`. It accepts resolved numeric IDs, not display
+names.
 Calls from all other accounts are intentionally declined. After changing the configured username,
 restart `voice-agent` so it resolves the new identity.
 

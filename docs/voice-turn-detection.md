@@ -18,8 +18,8 @@ does not assume every native media frame is 20 ms.
 
 | Situation | Change |
 | --- | --- |
-| Replies feel delayed | Lower `VAD_END_SILENCE_MS` in 50–100 ms steps; 450–600 is a useful range. |
-| Caller is interrupted during pauses | Raise `VAD_END_SILENCE_MS`; 700–900 handles deliberate speech well. |
+| Replies feel delayed | Lower `VAD_END_SILENCE_MS` in 50–100 ms steps; 800–1200 is a useful range. |
+| Caller is interrupted during pauses | Raise `VAD_END_SILENCE_MS`; 1200–1600 handles deliberate speech well. |
 | Background noise creates turns | Raise `VAD_START_RMS` and `VAD_MIN_UTTERANCE_MS`. |
 | Quiet speakers are missed | Lower both RMS values while keeping `CONTINUE_RMS <= START_RMS`. |
 | First syllable is missing | Raise `VAD_PRE_ROLL_MS` to 250–300. |
