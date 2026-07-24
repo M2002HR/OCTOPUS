@@ -39,7 +39,7 @@ class FakeCalls:
 
 
 @pytest.mark.asyncio
-async def test_inbound_server_accepts_only_configured_peer(tmp_path: Path) -> None:
+async def test_inbound_server_accepts_each_configured_peer(tmp_path: Path) -> None:
     calls = FakeCalls()
     accepted: list[int] = []
     ended: list[int] = []
@@ -55,7 +55,7 @@ async def test_inbound_server_accepts_only_configured_peer(tmp_path: Path) -> No
         telethon_client=object(),
         calls=calls,
         audit=store,
-        allowed_peer_id=42,
+        allowed_peer_ids=frozenset({42, 43}),
         on_authorized_call=on_authorized,
         on_call_ended=on_ended,
     )
@@ -70,6 +70,9 @@ async def test_inbound_server_accepts_only_configured_peer(tmp_path: Path) -> No
     await asyncio.sleep(0)
     assert ended == [42]
     assert not server.busy
+    await calls.emit(ChatUpdate(43, ChatUpdate.Status.INCOMING_CALL))
+    await asyncio.sleep(0)
+    assert accepted == [42, 43]
     await server.stop()
     store.close()
 
@@ -89,7 +92,7 @@ async def test_inbound_server_rejects_non_allowlisted_peer(tmp_path: Path) -> No
         telethon_client=object(),
         calls=calls,
         audit=store,
-        allowed_peer_id=42,
+        allowed_peer_ids=frozenset({42, 43}),
         on_authorized_call=unexpected_authorized,
         on_call_ended=on_ended,
     )

@@ -25,6 +25,14 @@ def test_settings_reads_allowlist(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert settings.allowed_peer_ids == frozenset({11, 22})
 
 
+def test_settings_reads_multiple_inbound_usernames(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_USERNAMES", "primary_caller, test_caller")
+    settings = Settings.load(tmp_path / "missing.env")
+    assert settings.inbound_usernames == ("primary_caller", "test_caller")
+
+
 def test_settings_rejects_too_short_call_timeout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -42,23 +50,32 @@ def test_settings_rejects_invalid_vad_hysteresis(
         Settings.load(tmp_path / "missing.env")
 
 
+def test_settings_rejects_non_english_speech_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VOICE_AGENT_LANGUAGE", "fr")
+    with pytest.raises(ConfigurationError, match="must be en"):
+        Settings.load(tmp_path / "missing.env")
+
+
 def test_settings_requires_explicit_inbound_enablement(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("VOICE_AGENT_INBOUND_ENABLED", "false")
-    monkeypatch.setenv("VOICE_AGENT_INBOUND_USERNAME", "we_are_waiting_for_him")
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_USERNAMES", "we_are_waiting_for_him")
     settings = Settings.load(tmp_path / "missing.env")
     with pytest.raises(ConfigurationError, match="INBOUND_ENABLED"):
         settings.validate_inbound_service()
 
 
-def test_settings_requires_inbound_username(
+def test_settings_requires_inbound_usernames(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("VOICE_AGENT_INBOUND_ENABLED", "true")
-    monkeypatch.delenv("VOICE_AGENT_INBOUND_USERNAME", raising=False)
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_USERNAME", "")
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_USERNAMES", "")
     settings = Settings.load(tmp_path / "missing.env")
-    with pytest.raises(ConfigurationError, match="INBOUND_USERNAME"):
+    with pytest.raises(ConfigurationError, match="INBOUND_USERNAMES"):
         settings.validate_inbound_service()
 
 
@@ -66,7 +83,7 @@ def test_settings_requires_message_username_when_enabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("VOICE_AGENT_INBOUND_ENABLED", "true")
-    monkeypatch.setenv("VOICE_AGENT_INBOUND_USERNAME", "we_are_waiting_for_him")
+    monkeypatch.setenv("VOICE_AGENT_INBOUND_USERNAMES", "we_are_waiting_for_him")
     monkeypatch.setenv("VOICE_AGENT_MESSAGE_ENABLED", "true")
     monkeypatch.setenv("VOICE_AGENT_MESSAGE_USERNAME", "")
     settings = Settings.load(tmp_path / "missing.env")
