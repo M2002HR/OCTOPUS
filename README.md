@@ -20,6 +20,7 @@ The Bot control center mirrors the core Codex CLI workflow:
 - `/new` creates a fresh Codex conversation in the selected workspace.
 - `/resume` lists saved threads and resumes the selected App Server thread.
 - `/status`, `/permissions`, `/model`, and `/reasoning` expose the active execution context.
+- `/language` changes voice transcription and AI response language while keeping the control UI in English.
 - `/logs` controls live `error`, `info`, `debug`, or `off` progress; `/logs <job-id>` shows the durable event history.
 - `/diff` and `/review` run read-only Codex inspections.
 - `/browser` runs the workspace's Chrome Lab/browser workflow and returns screenshots or reports to Telegram.
@@ -29,6 +30,10 @@ review, settings, and cancellation one tap away. Telegram's slash-command menu
 is registered automatically when the Bot starts. With a workspace selected,
 Codex is the primary execution brain and Ajil remains the orchestration/direct
 conversation layer.
+
+At `info` or `debug`, Telegram receives Codex's public intermediate
+`agentMessage` commentary as well as lifecycle and tool summaries. Private
+reasoning items and raw credentials are never forwarded.
 
 Telegram Voice Agent is a modular, auditable assistant for one-to-one Telegram calls. It
 uses the existing Telethon string session, PyTgCalls/NTgCalls for private-call media, Ajil

@@ -160,7 +160,7 @@ class CodexAppServer:
         thread_id = thread.get("id")
         if not isinstance(thread_id, str) or not thread_id:
             raise CodexProtocolError(f"thread/start did not return a thread id: {result!r}")
-        return CodexThreadHandle(thread_id, absolute_cwd, str(result.get("model") or self.config.model))
+        return CodexThreadHandle(thread_id, absolute_cwd, self.config.model)
 
     async def resume_thread(self, thread_id: str, cwd: Path | str) -> CodexThreadHandle:
         """Resume a persisted App Server thread in its registered workspace."""
@@ -183,7 +183,7 @@ class CodexAppServer:
         return CodexThreadHandle(
             resumed_id,
             absolute_cwd,
-            str(result.get("model") or thread.get("model") or self.config.model),
+            self.config.model,
         )
 
     async def run_turn(
@@ -199,7 +199,9 @@ class CodexAppServer:
             "input": [{"type": "text", "text": prompt}],
             "approvalPolicy": self.config.approval_policy,
             "effort": self.config.reasoning_effort,
-            "model": thread.model,
+            # A resumed thread may have been created with another model. The
+            # explicit per-turn override is authoritative, matching `/model`.
+            "model": self.config.model,
             "cwd": thread.cwd,
         }
         if output_schema is not None:
@@ -299,14 +301,21 @@ class CodexAppServer:
 
     @staticmethod
     def _assistant_text(events: list[Json]) -> str:
-        chunks: list[str] = []
+        final_messages: list[str] = []
+        legacy_messages: list[str] = []
         for event in events:
             if event.get("method") != "item/completed":
                 continue
             item = (event.get("params") or {}).get("item") or {}
             if item.get("type") == "agentMessage" and isinstance(item.get("text"), str):
-                chunks.append(item["text"])
-        return "\n".join(chunks).strip()
+                phase = str(item.get("phase") or "").casefold()
+                if phase == "final_answer":
+                    final_messages.append(item["text"])
+                elif phase != "commentary":
+                    # Older providers may omit phase. Preserve their historical
+                    # behavior rather than dropping the only assistant output.
+                    legacy_messages.append(item["text"])
+        return "\n".join(final_messages or legacy_messages).strip()
 
     @staticmethod
     async def _default_approval(method: str, params: Json) -> Json:

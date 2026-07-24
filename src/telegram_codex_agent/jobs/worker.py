@@ -237,6 +237,7 @@ class Worker:
         codex_config = await self._codex_config(job_id)
         response_language = await self._response_language(job_id)
         last_activity_delivery = 0.0
+        delivered_agent_items: set[str] = set()
 
         async def event(method: str, params: dict[str, Any]) -> None:
             nonlocal last_activity_delivery
@@ -245,6 +246,25 @@ class Worker:
                 await self._record_codex_ids(job_id, str(params.get("threadId", "")), str(turn.get("id", "")))
             if method in {"turn/completed", "error"}:
                 await self._event(job_id, f"codex.{method.replace('/', '.')}", "Codex event received")
+            agent_message = self._codex_agent_message(method, params)
+            if agent_message:
+                item = params.get("item") or {}
+                item_id = str(item.get("id", ""))
+                if not item_id or item_id not in delivered_agent_items:
+                    if item_id:
+                        delivered_agent_items.add(item_id)
+                    await self._event(
+                        job_id,
+                        "codex.agent_message",
+                        agent_message,
+                        {
+                            "source_event": method,
+                            "item_id": item_id,
+                            "phase": str(item.get("phase") or "unknown"),
+                        },
+                    )
+                    await self._deliver_progress(job_id, f"💬 Codex\n\n{agent_message}")
+                return
             activity = self._codex_activity(method, params)
             if activity:
                 await self._event(job_id, "codex.activity", activity, {"source_event": method})
@@ -518,7 +538,10 @@ class Worker:
             raise RuntimeError("voice attachment path is unavailable or outside the artifact root")
         client = AjilClient(self.settings.ajil)
         try:
-            response = await client.transcribe(path, language=self.settings.voice.stt_language)
+            language = str(job.metadata_json.get("input_language", "")).casefold()
+            if language not in {"fa", "en"}:
+                language = self.settings.voice.stt_language
+            response = await client.transcribe(path, language=language)
             transcript = str(response.data.get("text", "")).strip()
             if not transcript:
                 raise RuntimeError("transcription returned no text")
@@ -594,6 +617,16 @@ class Worker:
                             sandbox_mode=self.settings.codex.sandbox_mode,
                         )
                     )
+            else:
+                existing.model = thread.model
+                existing.approval_policy = str(
+                    job.metadata_json.get("approval_policy")
+                    or self.settings.codex.approval_policy
+                )
+                existing.sandbox_mode = str(
+                    job.metadata_json.get("sandbox_mode")
+                    or self.settings.codex.sandbox_mode
+                )
             await self._event_in_session(session, job_id, "codex.thread.started", "Codex thread started", {"thread_id": thread.id})
             await session.commit()
         await self._deliver_progress(job_id, "⌛ Codex started a workspace session. I will send the verified result here.")
@@ -686,9 +719,32 @@ class Worker:
         messages = {
             "commandExecution": "Codex completed a workspace command.",
             "fileChange": "Codex completed a workspace file change.",
-            "agentMessage": "Codex produced an intermediate report.",
         }
         return messages.get(item_type, "")
+
+    @staticmethod
+    def _codex_agent_message(method: str, params: dict[str, Any]) -> str:
+        """Return public assistant commentary, never private reasoning items."""
+        if method != "item/completed":
+            return ""
+        item = params.get("item") or {}
+        if str(item.get("type", "")) != "agentMessage":
+            return ""
+        if str(item.get("phase") or "").casefold() == "final_answer":
+            return ""
+        text = str(item.get("text") or "").strip()
+        if not text:
+            return ""
+        # Preserve Codex's user-facing text while masking common accidental
+        # credential assignments before it leaves the machine.
+        text = re.sub(
+            r"(?i)\b(api[_-]?key|access[_-]?token|token|secret|password)"
+            r"(\s*[:=]\s*)([^\s,;]+)",
+            r"\1\2[REDACTED]",
+            text,
+        )
+        text = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", text)
+        return text
 
     @staticmethod
     def _plan(objective: str, intent: IntentType, has_project: bool) -> ExecutionPlan:
