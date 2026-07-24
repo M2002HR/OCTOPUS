@@ -4,7 +4,7 @@ app:
   timezone: ${TZ:-Asia/Tehran}
   language: fa
   api_host: ${AGENT_API_HOST:-127.0.0.1}
-  api_port: ${AGENT_API_PORT:-8090}
+  api_port: ${AGENT_API_PORT:-18090}
   log_level: ${LOG_LEVEL:-INFO}
   log_format: ${LOG_FORMAT:-json}
 telegram:
@@ -18,11 +18,11 @@ telegram:
   progress_edit_interval_seconds: 3
   max_message_length: 3800
 database:
-  url: ${DATABASE_URL:-postgresql+asyncpg://agent:agent_dev_password@127.0.0.1:5432/telegram_codex_agent}
+  url: ${DATABASE_URL:-postgresql+asyncpg://agent:agent_dev_password@127.0.0.1:15432/telegram_codex_agent}
   echo: false
   pool_size: 8
 redis:
-  url: ${REDIS_URL:-redis://127.0.0.1:6379/1}
+  url: ${REDIS_URL:-redis://127.0.0.1:16379/1}
   stream: telegram_codex_agent.jobs
   consumer_group: telegram_codex_agent.workers
 ajil:

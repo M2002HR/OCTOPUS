@@ -12,6 +12,7 @@ import uvicorn
 from telegram_codex_agent.api.app import create_app
 from telegram_codex_agent.core.config import load_settings
 from telegram_codex_agent.integrations.ajil import AjilClient
+from telegram_codex_agent.runtime import health_registry
 
 app = typer.Typer(no_args_is_help=True)
 config_app = typer.Typer(no_args_is_help=True)
@@ -49,7 +50,11 @@ def config_dump(
 @app.command("api")
 def api(path: Path | None = typer.Option(None, "--config")) -> None:
     settings = _settings(path)
-    uvicorn.run(create_app(settings), host=settings.app.api_host, port=settings.app.api_port)
+    uvicorn.run(
+        create_app(settings, health_registry(settings)),
+        host=settings.app.api_host,
+        port=settings.app.api_port,
+    )
 
 
 @app.command("ajil-smoke")

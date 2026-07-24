@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool
@@ -12,8 +11,6 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from telegram_codex_agent.db.models import Base
 
 config = context.config
-if config.config_file_name:
-    fileConfig(config.config_file_name)
 config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url")))
 target_metadata = Base.metadata
 

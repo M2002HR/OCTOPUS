@@ -36,7 +36,10 @@ class AjilClient:
         if config.auth_token:
             headers[config.auth_header_name] = config.auth_token
         self._client = client or httpx.AsyncClient(
-            base_url=config.base_url.rstrip("/"), timeout=config.timeout_seconds, headers=headers
+            base_url=config.base_url.rstrip("/"),
+            timeout=config.timeout_seconds,
+            headers=headers,
+            trust_env=False,
         )
         self._owns_client = client is None
 
