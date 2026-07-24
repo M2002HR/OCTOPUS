@@ -1,0 +1,72 @@
+app:
+  name: telegram-codex-agent
+  environment: ${APP_ENV:-development}
+  timezone: ${TZ:-Asia/Tehran}
+  language: fa
+  api_host: ${AGENT_API_HOST:-127.0.0.1}
+  api_port: ${AGENT_API_PORT:-8090}
+  log_level: ${LOG_LEVEL:-INFO}
+  log_format: ${LOG_FORMAT:-json}
+telegram:
+  transport: ${TELEGRAM_TRANSPORT:-polling}
+  bot_token_env: TELEGRAM_BOT_TOKEN
+  allowed_user_ids: []
+  allowed_chat_ids: []
+  webhook_public_url: ${TELEGRAM_WEBHOOK_PUBLIC_URL:-}
+  webhook_secret_env: TELEGRAM_WEBHOOK_SECRET
+  default_parse_mode: HTML
+  progress_edit_interval_seconds: 3
+  max_message_length: 3800
+database:
+  url: ${DATABASE_URL:-postgresql+asyncpg://agent:agent_dev_password@127.0.0.1:5432/telegram_codex_agent}
+  echo: false
+  pool_size: 8
+redis:
+  url: ${REDIS_URL:-redis://127.0.0.1:6379/1}
+  stream: telegram_codex_agent.jobs
+  consumer_group: telegram_codex_agent.workers
+ajil:
+  base_url: ${AJIL_BASE_URL:-http://127.0.0.1:8080}
+  auth_token_env: UAG_AUTH_TOKEN
+  auth_header_name: ${UAG_AUTH_HEADER_NAME:-x-api-token}
+  timeout_seconds: 45
+  planner:
+    model: ${AJIL_PLANNER_MODEL:-}
+    temperature: 0
+    max_retries: 2
+    reject_local_fallback: true
+codex:
+  binary: ${CODEX_BINARY:-codex}
+  model: ${CODEX_MODEL:-}
+  reasoning_effort: ${CODEX_REASONING_EFFORT:-high}
+  approval_policy: ${CODEX_APPROVAL_POLICY:-never}
+  sandbox_mode: ${CODEX_SANDBOX_MODE:-danger-full-access}
+  network_access: ${CODEX_NETWORK_ACCESS:-true}
+  startup_timeout_seconds: 30
+jobs:
+  worker_count: 1
+  lease_seconds: 30
+  heartbeat_seconds: 5
+  timeout_seconds: 3600
+  step_timeout_seconds: 900
+  output_byte_cap: 1048576
+  recovery_policy: resume_or_fail
+artifacts:
+  root: ${ARTIFACT_ROOT:-./data/artifacts}
+  retention_days: ${ARTIFACT_RETENTION_DAYS:-30}
+  telegram_direct_upload_max_bytes: 47185920
+voice:
+  enabled: true
+  telegram_voice_replies_default: false
+  stt_language: fa
+  ffmpeg_binary: ${FFMPEG_BINARY:-ffmpeg}
+  legacy_telethon_service: true
+browser:
+  default_mode: isolated_headless
+  headless: ${PLAYWRIGHT_HEADLESS:-true}
+  cdp_endpoint: ${CHROME_CDP_ENDPOINT:-http://127.0.0.1:9222}
+memory:
+  enabled: true
+  summarize_after_messages: 30
+  retrieval_limit: 8
+projects: []

@@ -14,4 +14,5 @@ data/
 *.db
 *.egg-info/
 build/
-vendor/Ajil_Unified_AI_Gateway/.env
+modules/ajil_uag/.env
+generated/codex/
