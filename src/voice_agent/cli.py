@@ -38,13 +38,14 @@ def build_orchestrator(
         brain=client,
         synthesizer=EdgeSpeechSynthesizer(
             voice=settings.edge_voice,
-            voices_by_language=settings.edge_voices_by_language,
             rate=settings.edge_rate,
             ffmpeg_bin=settings.ffmpeg_bin,
         ),
         audit=audit,
         system_prompt=settings.system_prompt,
         output_dir=settings.runtime_dir / "tts",
+        output_language="en",
+        max_voice_reply_characters=settings.max_voice_reply_characters,
         max_history_messages=settings.max_history_messages,
         persist_transcripts=settings.recording_mode == "transcript_only",
     )
@@ -102,14 +103,14 @@ def main() -> None:
     )
     process.add_argument("audio")
     process.add_argument("--call-id", default="manual-test")
-    process.add_argument("--language", default="fa")
+    process.add_argument("--language", choices=("en",), default="en")
     process.add_argument("--mime", default="audio/ogg")
     process.add_argument("--env")
     call = sub.add_parser("call", help="Place one explicitly requested allowlisted test call")
     call.add_argument("--username", required=True)
     call.add_argument("--env")
     serve = sub.add_parser(
-        "serve", help="Stay online and accept calls only from VOICE_AGENT_INBOUND_USERNAME"
+        "serve", help="Stay online and accept calls from VOICE_AGENT_INBOUND_USERNAMES"
     )
     serve.add_argument("--env")
     args = parser.parse_args()

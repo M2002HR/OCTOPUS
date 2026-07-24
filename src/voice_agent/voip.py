@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import wave
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from ntgcalls import MediaSource
@@ -15,6 +17,7 @@ from pytgcalls.types import (
     Direction,
     MediaStream,
     RawCallUpdate,
+    RecordStream,
     StreamFrames,
 )
 from pytgcalls.types.raw import AudioParameters, AudioStream
@@ -77,6 +80,11 @@ class TelethonVoipEngine:
             on_utterance=self._schedule_utterance,
         )
         self.started = not self._owns_calls
+        self._observed_frame_stream = False
+        self._observed_unexpected_stream = False
+        self._capture_muted_until = 0.0
+        self._suppressed_frames = 0
+        self._turn_task: asyncio.Future[None] | None = None
         # A direct Telethon raw handler distinguishes a missing Telegram update
         # from a downstream PyTgCalls/NTgCalls handshake failure.  Never retain
         # the call payload, keys, fingerprint, or signaling bytes.
@@ -107,19 +115,26 @@ class TelethonVoipEngine:
             Event("voip.started", self.call_id, self.call_id, details={"peer_id": self.peer_id})
         )
 
-    async def place_and_play(self, path: Path) -> None:
+    async def place_and_play(self, path: Path, *, duration_ms: int = 0) -> None:
         await self.start()
+        self._suspend_capture(duration_ms)
         self.audit.append(
-            Event("voip.playback.started", self.call_id, self.call_id, details={"file": path.name})
+            Event(
+                "voip.playback.started",
+                self.call_id,
+                self.call_id,
+                details={"file": path.name, "duration_ms": duration_ms},
+            )
         )
         await self.calls.play(
             self.peer_id,
             await self._playback_stream(path),
             config=CallConfig(timeout=self.call_timeout_seconds),
         )
+        await self.calls.record(self.peer_id, RecordStream(audio=True))
 
-    async def play(self, path: Path) -> None:
-        await self.place_and_play(path)
+    async def play(self, path: Path, *, duration_ms: int = 0) -> None:
+        await self.place_and_play(path, duration_ms=duration_ms)
 
     async def _playback_stream(self, path: Path) -> MediaStream:
         """Play one file while explicitly requesting remote speaker PCM frames."""
@@ -173,12 +188,66 @@ class TelethonVoipEngine:
             return
         if update.chat_id != self.peer_id:
             return
-        if update.direction != Direction.INCOMING or update.device != Device.SPEAKER:
+        if not self._observed_frame_stream:
+            self._observed_frame_stream = True
+            self.audit.append(
+                Event(
+                    "voip.frames.received",
+                    self.call_id,
+                    self.call_id,
+                    details={
+                        "direction": str(update.direction),
+                        "device": str(update.device),
+                    },
+                )
+            )
+        if update.direction != Direction.INCOMING or update.device != Device.MICROPHONE:
+            if not self._observed_unexpected_stream:
+                self._observed_unexpected_stream = True
+                self.audit.append(
+                    Event(
+                        "voip.frames.ignored",
+                        self.call_id,
+                        self.call_id,
+                        details={
+                            "direction": str(update.direction),
+                            "device": str(update.device),
+                        },
+                    )
+                )
             return
+        if monotonic() < self._capture_muted_until:
+            self._suppressed_frames += len(update.frames)
+            return
+        if self._suppressed_frames:
+            self.audit.append(
+                Event(
+                    "voip.capture.resumed",
+                    self.call_id,
+                    self.call_id,
+                    details={"suppressed_frames": self._suppressed_frames},
+                )
+            )
+            self._suppressed_frames = 0
         for frame in update.frames:
             self.assembler.feed(frame.frame)
 
     def _schedule_utterance(self, path: Path) -> None:
+        if self._turn_task is not None and not self._turn_task.done():
+            path.unlink(missing_ok=True)
+            self.audit.append(
+                Event(
+                    "voip.turn.dropped",
+                    self.call_id,
+                    self.call_id,
+                    details={"reason": "turn_in_progress"},
+                )
+            )
+            return
+        details = self._captured_audio_details(path)
+        self.audit.append(
+            Event("voip.utterance.captured", self.call_id, self.call_id, details=details)
+        )
         turn = AudioTurn(
             call_id=self.call_id,
             audio_path=path,
@@ -186,7 +255,37 @@ class TelethonVoipEngine:
             language=self.language,
         )
         task: asyncio.Future[None] = asyncio.ensure_future(self.on_utterance(turn))
+        self._turn_task = task
         task.add_done_callback(self._log_turn_failure)
+
+    def _suspend_capture(self, duration_ms: int) -> None:
+        """Keep played assistant audio from being processed as caller speech."""
+        self.assembler.discard()
+        guard_seconds = max(0, duration_ms) / 1000 + 0.35
+        self._capture_muted_until = max(self._capture_muted_until, monotonic() + guard_seconds)
+        self._suppressed_frames = 0
+        self.audit.append(
+            Event(
+                "voip.capture.suspended",
+                self.call_id,
+                self.call_id,
+                details={"guard_ms": round(guard_seconds * 1000)},
+            )
+        )
+
+    @staticmethod
+    def _captured_audio_details(path: Path) -> dict[str, int]:
+        with wave.open(str(path), "rb") as stream:
+            frames = stream.getnframes()
+            sample_rate = stream.getframerate()
+            channels = stream.getnchannels()
+        duration_ms = round(frames * 1000 / sample_rate) if sample_rate else 0
+        return {
+            "bytes": path.stat().st_size,
+            "channels": channels,
+            "duration_ms": duration_ms,
+            "sample_rate": sample_rate,
+        }
 
     def _log_turn_failure(self, task: asyncio.Future[None]) -> None:
         try:
@@ -204,18 +303,21 @@ class IncomingCallServer:
         *,
         telethon_client: Any,
         audit: AuditStore,
-        allowed_peer_id: int,
+        allowed_peer_ids: frozenset[int],
         on_authorized_call: Callable[[int, Any], Awaitable[None]],
         on_call_ended: Callable[[int], Awaitable[None]],
         calls: Any | None = None,
     ) -> None:
         self.calls = calls if calls is not None else PyTgCalls(telethon_client)
         self.audit = audit
-        self.allowed_peer_id = allowed_peer_id
+        if not allowed_peer_ids:
+            raise ValueError("IncomingCallServer requires at least one allowed peer")
+        self.allowed_peer_ids = allowed_peer_ids
         self.on_authorized_call = on_authorized_call
         self.on_call_ended = on_call_ended
         self.started = False
         self.busy = False
+        self.active_peer_id: int | None = None
         self._tasks: set[asyncio.Future[None]] = set()
         self.calls.add_handler(self._on_update)
 
@@ -228,7 +330,7 @@ class IncomingCallServer:
             Event(
                 "inbound.service.ready",
                 "inbound-listener",
-                details={"allowed_peer_id": self.allowed_peer_id},
+                details={"allowed_peer_count": len(self.allowed_peer_ids)},
             )
         )
 
@@ -245,7 +347,7 @@ class IncomingCallServer:
         if not isinstance(update, ChatUpdate):
             return
         if update.status & ChatUpdate.Status.INCOMING_CALL:
-            if update.chat_id != self.allowed_peer_id:
+            if update.chat_id not in self.allowed_peer_ids:
                 self.audit.append(
                     Event(
                         "call.incoming.rejected",
@@ -266,6 +368,7 @@ class IncomingCallServer:
                 self._track(self._discard(update.chat_id))
                 return
             self.busy = True
+            self.active_peer_id = update.chat_id
             self.audit.append(
                 Event(
                     "call.incoming.authorized",
@@ -275,13 +378,14 @@ class IncomingCallServer:
             )
             self._track(self._accept(update.chat_id, update))
             return
-        is_allowed_discard = (
-            update.chat_id == self.allowed_peer_id
+        is_active_discard = (
+            update.chat_id == self.active_peer_id
             and update.status & ChatUpdate.Status.DISCARDED_CALL
         )
-        if is_allowed_discard:
+        if is_active_discard:
             was_busy = self.busy
             self.busy = False
+            self.active_peer_id = None
             if was_busy:
                 self._track(self.on_call_ended(update.chat_id))
 
@@ -291,6 +395,7 @@ class IncomingCallServer:
         except Exception as exc:  # pragma: no cover - network failure path
             logger.exception("failed to accept authorized incoming Telegram call")
             self.busy = False
+            self.active_peer_id = None
             self.audit.append(
                 Event(
                     "call.incoming.failed",

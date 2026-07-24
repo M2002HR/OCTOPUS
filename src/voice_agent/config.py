@@ -40,16 +40,6 @@ def _runtime_path(name: str, default: str, runtime: Path) -> Path:
     return path if path.is_absolute() else runtime / path
 
 
-def _voice_map(name: str) -> dict[str, str]:
-    raw = os.getenv(name, "")
-    result: dict[str, str] = {}
-    for item in raw.split(","):
-        language, separator, voice = item.partition(":")
-        if separator and language.strip() and voice.strip():
-            result[language.strip().casefold()] = voice.strip()
-    return result
-
-
 @dataclass(frozen=True, slots=True)
 class Settings:
     runtime_dir: Path
@@ -58,7 +48,7 @@ class Settings:
     allowed_peer_ids: frozenset[int]
     test_peer_username: str
     inbound_enabled: bool
-    inbound_username: str
+    inbound_usernames: tuple[str, ...]
     require_disclosure: bool
     recording_mode: str
     max_turn_seconds: int
@@ -73,6 +63,7 @@ class Settings:
     audio_channels: int
     language: str
     system_prompt: str
+    max_voice_reply_characters: int
     max_history_messages: int
     uag_base_url: str
     uag_chat_endpoint: str
@@ -85,7 +76,6 @@ class Settings:
     transcription_provider: str
     transcription_models: tuple[str, ...]
     edge_voice: str
-    edge_voices_by_language: dict[str, str]
     edge_rate: str
     ffmpeg_bin: str
     telegram_api_id: int
@@ -133,6 +123,22 @@ class Settings:
         def csv(name: str) -> tuple[str, ...]:
             return tuple(part.strip() for part in os.getenv(name, "").split(",") if part.strip())
 
+        legacy_inbound_username = os.getenv("VOICE_AGENT_INBOUND_USERNAME", "").strip()
+        inbound_usernames = csv("VOICE_AGENT_INBOUND_USERNAMES") or (
+            (legacy_inbound_username,) if legacy_inbound_username else ()
+        )
+        if len({username.casefold() for username in inbound_usernames}) != len(inbound_usernames):
+            raise ConfigurationError("VOICE_AGENT_INBOUND_USERNAMES must not contain duplicates")
+
+        language = os.getenv("VOICE_AGENT_LANGUAGE", "en").strip().casefold() or "en"
+        if language != "en":
+            raise ConfigurationError("VOICE_AGENT_LANGUAGE must be en")
+        message_stt_language = (
+            os.getenv("VOICE_AGENT_MESSAGE_STT_LANGUAGE", "en").strip().casefold() or "en"
+        )
+        if message_stt_language != "en":
+            raise ConfigurationError("VOICE_AGENT_MESSAGE_STT_LANGUAGE must be en")
+
         return cls(
             runtime_dir=runtime,
             audit_database_path=database,
@@ -140,7 +146,7 @@ class Settings:
             allowed_peer_ids=_csv_int("VOICE_AGENT_ALLOWED_PEER_IDS"),
             test_peer_username=os.getenv("VOICE_AGENT_TEST_PEER_USERNAME", "").strip(),
             inbound_enabled=_bool("VOICE_AGENT_INBOUND_ENABLED", False),
-            inbound_username=os.getenv("VOICE_AGENT_INBOUND_USERNAME", "").strip(),
+            inbound_usernames=inbound_usernames,
             require_disclosure=_bool("VOICE_AGENT_REQUIRE_DISCLOSURE", True),
             recording_mode=recording_mode,
             max_turn_seconds=_int("VOICE_AGENT_MAX_TURN_SECONDS", 45, minimum=1),
@@ -157,11 +163,15 @@ class Settings:
             vad_pre_roll_ms=_int("VOICE_AGENT_VAD_PRE_ROLL_MS", 200, minimum=0),
             audio_sample_rate=audio_sample_rate,
             audio_channels=audio_channels,
-            language=os.getenv("VOICE_AGENT_LANGUAGE", "fa").strip() or "fa",
+            language=language,
             system_prompt=os.getenv(
                 "VOICE_AGENT_SYSTEM_PROMPT",
-                "Reply naturally, directly, and concisely. Match the user's language.",
+                "Always reply in English. Reply naturally, directly, and concisely. "
+                "Do not introduce yourself or mention implementation details.",
             ).strip(),
+            max_voice_reply_characters=_int(
+                "VOICE_AGENT_MAX_VOICE_REPLY_CHARS", 480, minimum=80
+            ),
             max_history_messages=_int("VOICE_AGENT_MAX_HISTORY_MESSAGES", 12, minimum=1),
             uag_base_url=os.getenv("UAG_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
             uag_chat_endpoint=os.getenv("UAG_CHAT_ENDPOINT", "/v1/chat/completions"),
@@ -176,8 +186,7 @@ class Settings:
             chat_providers=csv("AI_CHAT_PROVIDERS"),
             transcription_provider=os.getenv("AI_TRANSCRIPTION_PROVIDER", "").strip(),
             transcription_models=csv("AI_TRANSCRIPTION_MODELS"),
-            edge_voice=os.getenv("EDGE_TTS_VOICE", "fa-IR-FaridNeural").strip(),
-            edge_voices_by_language=_voice_map("EDGE_TTS_VOICE_BY_LANGUAGE"),
+            edge_voice=os.getenv("EDGE_TTS_VOICE", "en-US-AndrewMultilingualNeural").strip(),
             edge_rate=os.getenv("EDGE_TTS_RATE", "+0%").strip(),
             ffmpeg_bin=os.getenv("FFMPEG_BIN", "ffmpeg").strip(),
             telegram_api_id=_int("TELEGRAM_API_ID", 0, minimum=0),
@@ -193,7 +202,7 @@ class Settings:
             message_enabled=_bool("VOICE_AGENT_MESSAGE_ENABLED", True),
             message_username=os.getenv(
                 "VOICE_AGENT_MESSAGE_USERNAME",
-                os.getenv("VOICE_AGENT_INBOUND_USERNAME", ""),
+                inbound_usernames[0] if inbound_usernames else "",
             ).strip(),
             message_default_response=os.getenv("VOICE_AGENT_MESSAGE_DEFAULT_RESPONSE", "text")
             .strip()
@@ -208,7 +217,7 @@ class Settings:
                 "VOICE_AGENT_MESSAGE_MEDIA_MANIFEST", "media-library/manifest.json", runtime
             ),
             message_vision_enabled=_bool("VOICE_AGENT_MESSAGE_VISION_ENABLED", True),
-            message_stt_language=os.getenv("VOICE_AGENT_MESSAGE_STT_LANGUAGE", "").strip() or None,
+            message_stt_language=message_stt_language,
             vision_models=csv("VOICE_AGENT_VISION_MODELS") or ("gemini/gemini-2.5-flash",),
             vision_providers=csv("VOICE_AGENT_VISION_PROVIDERS") or ("gemini",),
         )
@@ -230,8 +239,8 @@ class Settings:
     def validate_inbound_service(self) -> None:
         if not self.inbound_enabled:
             raise ConfigurationError("VOICE_AGENT_INBOUND_ENABLED must be true for serve mode")
-        if not self.inbound_username:
-            raise ConfigurationError("VOICE_AGENT_INBOUND_USERNAME is required for serve mode")
+        if not self.inbound_usernames:
+            raise ConfigurationError("VOICE_AGENT_INBOUND_USERNAMES is required for serve mode")
         if self.message_default_response not in {"voice", "text"}:
             raise ConfigurationError("VOICE_AGENT_MESSAGE_DEFAULT_RESPONSE must be voice or text")
         if self.message_enabled and not self.message_username:

@@ -43,13 +43,14 @@ class LiveVoiceAssistant:
             brain=self.uag,
             synthesizer=EdgeSpeechSynthesizer(
                 voice=settings.edge_voice,
-                voices_by_language=settings.edge_voices_by_language,
                 rate=settings.edge_rate,
                 ffmpeg_bin=settings.ffmpeg_bin,
             ),
             audit=self.audit,
             system_prompt=settings.system_prompt,
             output_dir=settings.runtime_dir / "tts",
+            output_language=settings.language,
+            max_voice_reply_characters=settings.max_voice_reply_characters,
             max_history_messages=settings.max_history_messages,
             persist_transcripts=settings.recording_mode == "transcript_only",
         )
@@ -57,9 +58,9 @@ class LiveVoiceAssistant:
         self.inbound_server: IncomingCallServer | None = None
         self.message_assistant: MessageAssistant | None = None
         self.call: Call | None = None
-        self.inbound_peer_id: int | None = None
-        self.inbound_peer_username: str | None = None
+        self.inbound_peers: dict[int, str | None] = {}
         self._inbound_intro_path: Path | None = None
+        self._inbound_intro_duration_ms = 0
         self._turn_lock = asyncio.Lock()
 
     async def place_test_call(self, username: str) -> Call:
@@ -84,7 +85,7 @@ class LiveVoiceAssistant:
             async with self._turn_lock:
                 result = await self.orchestrator.process(turn)
                 if self.engine is not None:
-                    await self.engine.play(result.audio_path)
+                    await self.engine.play(result.audio_path, duration_ms=result.duration_ms)
 
         self.engine = TelethonVoipEngine(
             telethon_client=self.telegram.client,
@@ -106,10 +107,10 @@ class LiveVoiceAssistant:
             on_utterance=on_utterance,
         )
         intro = (
-            "سلام. من یک دستیار صوتی خودکار هستم. "
-            "برای پاسخ‌گویی، صدای شما به متن تبدیل و پردازش می‌شود. بفرمایید."
+            "This is an automated voice service. Your speech will be transcribed and processed. "
+            "Hello, dear."
             if self.settings.require_disclosure
-            else "سلام، بفرمایید."
+            else "Hello, dear."
         )
         intro_path = self.settings.runtime_dir / "intro" / f"{call.id}.ogg"
         await self.orchestrator.synthesizer.synthesize(intro, intro_path)
@@ -137,17 +138,24 @@ class LiveVoiceAssistant:
         """Keep one Telegram session online and accept only the configured caller."""
         self.settings.validate_inbound_service()
         await self.telegram.connect()
-        peer = await self.telegram.resolve_allowed_user(self.settings.inbound_username)
-        self.inbound_peer_id = peer.user_id
-        self.inbound_peer_username = peer.username
+        peers = await asyncio.gather(
+            *(
+                self.telegram.resolve_allowed_user(username)
+                for username in self.settings.inbound_usernames
+            )
+        )
+        self.inbound_peers = {peer.user_id: peer.username for peer in peers}
+        if len(self.inbound_peers) != len(peers):
+            raise RuntimeError("configured inbound usernames resolved to the same Telegram user")
         self._inbound_intro_path = self.settings.runtime_dir / "intro" / "inbound-ready.ogg"
-        await self.orchestrator.synthesizer.synthesize(
+        self._inbound_intro_path.unlink(missing_ok=True)
+        self._inbound_intro_duration_ms = await self.orchestrator.synthesizer.synthesize(
             self._introduction(), self._inbound_intro_path
         )
         self.inbound_server = IncomingCallServer(
             telethon_client=self.telegram.client,
             audit=self.audit,
-            allowed_peer_id=peer.user_id,
+            allowed_peer_ids=frozenset(self.inbound_peers),
             on_authorized_call=self._accept_incoming_call,
             on_call_ended=self._finish_incoming_call,
         )
@@ -168,9 +176,9 @@ class LiveVoiceAssistant:
     async def _accept_incoming_call(self, peer_id: int, _: object) -> None:
         if self.inbound_server is None or self._inbound_intro_path is None:
             raise RuntimeError("inbound server is not initialized")
-        if peer_id != self.inbound_peer_id:
+        if peer_id not in self.inbound_peers:
             raise RuntimeError("incoming peer did not match the configured caller")
-        call = Call(peer_id=peer_id, peer_username=self.inbound_peer_username)
+        call = Call(peer_id=peer_id, peer_username=self.inbound_peers[peer_id])
         call.transition(CallState.RINGING)
         call.transition(CallState.CONNECTING)
         self.call = call
@@ -179,7 +187,7 @@ class LiveVoiceAssistant:
                 "call.incoming.accepting",
                 call.id,
                 call.id,
-                details={"peer_id": peer_id, "username": self.inbound_peer_username},
+                details={"peer_id": peer_id, "username": self.inbound_peers[peer_id]},
             )
         )
 
@@ -187,7 +195,7 @@ class LiveVoiceAssistant:
             async with self._turn_lock:
                 result = await self.orchestrator.process(turn)
                 if self.engine is not None:
-                    await self.engine.play(result.audio_path)
+                    await self.engine.play(result.audio_path, duration_ms=result.duration_ms)
 
         self.engine = TelethonVoipEngine(
             telethon_client=self.telegram.client,
@@ -210,7 +218,9 @@ class LiveVoiceAssistant:
             on_utterance=on_utterance,
         )
         try:
-            await self.engine.place_and_play(self._inbound_intro_path)
+            await self.engine.place_and_play(
+                self._inbound_intro_path, duration_ms=self._inbound_intro_duration_ms
+            )
         except Exception as exc:
             call.transition(CallState.FAILED)
             self.audit.append(
@@ -244,10 +254,10 @@ class LiveVoiceAssistant:
 
     def _introduction(self) -> str:
         return (
-            "سلام. من یک دستیار صوتی خودکار هستم. "
-            "برای پاسخ‌گویی، صدای شما به متن تبدیل و پردازش می‌شود. بفرمایید."
+            "This is an automated voice service. Your speech will be transcribed and processed. "
+            "Hello, dear."
             if self.settings.require_disclosure
-            else "سلام، بفرمایید."
+            else "Hello, dear."
         )
 
     def _cleanup_call_media(self, call_id: str) -> None:

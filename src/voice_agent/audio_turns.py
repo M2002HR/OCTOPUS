@@ -90,6 +90,10 @@ class PcmTurnAssembler:
         self.on_utterance(path)
         return path
 
+    def discard(self) -> None:
+        """Forget buffered capture without emitting a partial caller turn."""
+        self._reset()
+
     def _append_pre_roll(self, pcm16: bytes, duration_ms: int) -> None:
         self._pre_roll.append((pcm16, duration_ms))
         total_ms = sum(frame_duration for _, frame_duration in self._pre_roll)
