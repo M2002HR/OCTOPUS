@@ -25,7 +25,7 @@ docker compose up -d --wait uag-gateway
 
 # Verify the complete STT -> AI -> TTS pipeline without a call.
 UAG_BASE_URL=http://127.0.0.1:18081 \
-  .venv/bin/telegram-voice-agent process-file runtime/verification/edge-smoke.ogg --language fa
+  .venv/bin/telegram-voice-agent process-file runtime/verification/edge-smoke.ogg --language en
 ```
 
 To run the persistent inbound assistant, set `VOICE_AGENT_INBOUND_ENABLED=true`, set
