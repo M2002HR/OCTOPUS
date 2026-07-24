@@ -9,6 +9,18 @@ and writes it with `0600` permissions.
 Never commit `.env`, copy its values into a submodule, or include them in logs, support tickets,
 or shell history.
 
+## Telegram Codex runtime preferences
+
+The Bot stores per-user runtime preferences in PostgreSQL. Open `/config` and
+use the Model, Reasoning, Language, Permissions, and Logs selectors; `/status`
+shows the values that the next job will snapshot.
+
+Language selection applies to both voice-note transcription and AI responses.
+English is the default. Model and reasoning selections are sent as explicit
+`turn/start` overrides, including when an existing Codex thread is resumed.
+At log level `info` or `debug`, public Codex commentary is forwarded to
+Telegram; private reasoning events are never forwarded.
+
 ## Telegram and call policy
 
 | Variable | Default | Meaning |

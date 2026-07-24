@@ -36,7 +36,7 @@ class AppConfig(BaseModel):
     name: str = "telegram-codex-agent"
     environment: str = "development"
     timezone: str = "Asia/Tehran"
-    language: str = "fa"
+    language: str = "en"
     api_host: str = "127.0.0.1"
     api_port: int = 8090
     log_level: str = "INFO"
@@ -126,7 +126,7 @@ class ArtifactConfig(BaseModel):
 class VoiceConfig(BaseModel):
     enabled: bool = True
     telegram_voice_replies_default: bool = False
-    stt_language: str = "fa"
+    stt_language: str = "en"
     ffmpeg_binary: str = "ffmpeg"
     legacy_telethon_service: bool = True
 

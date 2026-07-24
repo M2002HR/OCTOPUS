@@ -131,6 +131,9 @@ async def run_bot() -> None:
                 "nav:settings": "/config",
                 "nav:logs": "/logs",
                 "nav:permissions": "/permissions",
+                "nav:model": "/model",
+                "nav:reasoning": "/reasoning",
+                "nav:language": "/language",
                 "nav:browser": "/browser",
                 "nav:review": "/review_menu",
             }
@@ -139,6 +142,8 @@ async def run_bot() -> None:
                 text = "/permissions " + text.split(maxsplit=1)[1]
             elif text in {"/permission", "/permision"}:
                 text = "/permissions"
+            if text.startswith("/language "):
+                text = "/config language " + text.removeprefix("/language ").strip()
             if text.startswith("project:"):
                 text = f"/project {text.removeprefix('project:')}"
             if text.startswith("session:"):
@@ -181,6 +186,7 @@ async def run_bot() -> None:
                     "/status — workspace, model, permission and latest job\n"
                     "/permissions — Read Only / Workspace / Full Access\n"
                     "/model and /reasoning — execution model controls\n"
+                    "/language — voice input and AI response language\n"
                     "/diff — inspect uncommitted changes\n"
                     "/review — review the working tree\n"
                     "/browser — browser checks, screenshots and artifacts\n"
@@ -238,6 +244,7 @@ async def run_bot() -> None:
                     "Octopus status: ONLINE\n"
                     f"Codex model: {preferences.get('codex_model') or settings.codex.model}\n"
                     f"Reasoning: {preferences.get('codex_reasoning_effort') or settings.codex.reasoning_effort}\n"
+                    f"Language: {preferences.get('response_language') or settings.app.language}\n"
                     f"Permissions: {preferences.get('sandbox_mode') or settings.codex.sandbox_mode}\n"
                     f"Live logs: {preferences.get('log_level') or 'info'}\n"
                     f"Codex thread: {str(sessions[0]['thread_id'])[:12] if sessions else 'not started'}\n"
@@ -376,14 +383,26 @@ async def run_bot() -> None:
                 effort = str(preferences.get("codex_reasoning_effort", ""))
                 return BotResponse(
                     f"Codex model: {selected or settings.codex.model}\nReasoning: {effort or settings.codex.reasoning_effort}",
-                    [[("Terra", "config:model:gpt-5.6-terra"), ("Sol", "config:model:gpt-5.6-sol")],
-                     [("Low", "config:effort:low"), ("High", "config:effort:high"), ("XHigh", "config:effort:xhigh")]],
+                    [[
+                        (
+                            f"{'✓ ' if (selected or settings.codex.model) == 'gpt-5.6-terra' else ''}Terra",
+                            "config:model:gpt-5.6-terra",
+                        ),
+                        (
+                            f"{'✓ ' if (selected or settings.codex.model) == 'gpt-5.6-sol' else ''}Sol",
+                            "config:model:gpt-5.6-sol",
+                        ),
+                    ],
+                     [("🧠 Reasoning", "nav:reasoning"), ("⚙️ Settings", "nav:settings")]],
                 )
             if text.startswith("/codex model ") or text.startswith("/model "):
                 model = text.split(maxsplit=2)[-1].strip()
                 if not model or not model.startswith("gpt-"):
                     return "Invalid model name."
-                return "Default Codex model saved." if await jobs.set_user_preference(user_id, "codex_model", model) else "Send one task first so your account can be registered."
+                return BotResponse(
+                    f"Codex model changed to {model}. It applies to new and resumed turns.",
+                    [[("🤖 Model settings", "nav:model"), ("📊 Status", "nav:home_status")]],
+                ) if await jobs.set_user_preference(user_id, "codex_model", model) else "Send one task first so your account can be registered."
             if text == "/config":
                 context = await jobs.active_context(user_id, chat.id)
                 preferences = context[0].preferences_json if context else {}
@@ -394,8 +413,8 @@ async def run_bot() -> None:
                     f"Response language: {preferences.get('response_language') or settings.app.language}\n"
                     f"Permissions: {preferences.get('sandbox_mode') or settings.codex.sandbox_mode}\n"
                     f"Live logs: {preferences.get('log_level') or 'info'}",
-                    [[("🤖 Model", "config:model:gpt-5.6-terra"), ("🧠 Reasoning", "config:effort:high")],
-                     [("English", "config:language:en")],
+                    [[("🤖 Model", "nav:model"), ("🧠 Reasoning", "nav:reasoning")],
+                     [("🌐 Language", "nav:language")],
                      [("🔐 Permissions", "nav:permissions"), ("📜 Logs", "nav:logs")],
                      [("🏠 Home", "nav:home")]],
                 )
@@ -403,24 +422,74 @@ async def run_bot() -> None:
                 model = text.removeprefix("/config model ").strip()
                 if not model.startswith("gpt-"):
                     return "Invalid model name."
-                return "Model saved." if await jobs.set_user_preference(user_id, "codex_model", model) else "Send one task first."
+                return BotResponse(
+                    f"Codex model changed to {model}. It applies to new and resumed turns.",
+                    [[("🤖 Model settings", "nav:model"), ("📊 Status", "nav:home_status")]],
+                ) if await jobs.set_user_preference(user_id, "codex_model", model) else "Send one task first."
             if text.startswith("/config effort ") or text.startswith("/reasoning "):
                 effort = text.split()[-1].strip().casefold()
                 if effort not in {"low", "medium", "high", "xhigh", "max", "ultra"}:
                     return "Invalid reasoning effort."
-                return "Reasoning effort saved." if await jobs.set_user_preference(user_id, "codex_reasoning_effort", effort) else "Send one task first."
-            if text == "/reasoning":
                 return BotResponse(
-                    "Choose Codex reasoning effort:",
-                    [[("Low", "config:effort:low"), ("Medium", "config:effort:medium")],
-                     [("High", "config:effort:high"), ("XHigh", "config:effort:xhigh")],
-                     [("Max", "config:effort:max"), ("Ultra", "config:effort:ultra")]],
+                    f"Reasoning effort changed to {effort}.",
+                    [[("🧠 Reasoning settings", "nav:reasoning"), ("📊 Status", "nav:home_status")]],
+                ) if await jobs.set_user_preference(user_id, "codex_reasoning_effort", effort) else "Send one task first."
+            if text == "/reasoning":
+                context = await jobs.active_context(user_id, chat.id)
+                preferences = context[0].preferences_json if context else {}
+                current = str(
+                    preferences.get("codex_reasoning_effort")
+                    or settings.codex.reasoning_effort
+                )
+                return BotResponse(
+                    f"Choose Codex reasoning effort.\nCurrent: {current}",
+                    [[
+                        (f"{'✓ ' if current == 'low' else ''}Low", "config:effort:low"),
+                        (f"{'✓ ' if current == 'medium' else ''}Medium", "config:effort:medium"),
+                    ],
+                     [
+                         (f"{'✓ ' if current == 'high' else ''}High", "config:effort:high"),
+                         (f"{'✓ ' if current == 'xhigh' else ''}XHigh", "config:effort:xhigh"),
+                     ],
+                     [
+                         (f"{'✓ ' if current == 'max' else ''}Max", "config:effort:max"),
+                         (f"{'✓ ' if current == 'ultra' else ''}Ultra", "config:effort:ultra"),
+                     ],
+                     [("🤖 Model", "nav:model"), ("⚙️ Settings", "nav:settings")]],
+                )
+            if text == "/language":
+                context = await jobs.active_context(user_id, chat.id)
+                preferences = context[0].preferences_json if context else {}
+                current = str(
+                    preferences.get("response_language")
+                    or settings.app.language
+                )
+                return BotResponse(
+                    "Choose the agent language for voice transcription and AI responses.\n"
+                    f"Current: {'English' if current == 'en' else 'Persian'}\n"
+                    "The control interface itself remains English.",
+                    [[
+                        (f"{'✓ ' if current == 'en' else ''}English", "config:language:en"),
+                        (f"{'✓ ' if current == 'fa' else ''}Persian", "config:language:fa"),
+                    ],
+                     [("⚙️ Settings", "nav:settings"), ("📊 Status", "nav:home_status")]],
                 )
             if text.startswith("/config language "):
                 language = text.removeprefix("/config language ").strip().casefold()
-                if language != "en":
-                    return "English is the only supported response language."
-                return "Response language saved." if await jobs.set_user_preference(user_id, "response_language", language) else "Send one task first."
+                if language not in {"en", "fa"}:
+                    return "Language must be en or fa."
+                saved = await jobs.set_user_preferences(
+                    user_id,
+                    {
+                        "response_language": language,
+                        "input_language": language,
+                    },
+                )
+                label = "English" if language == "en" else "Persian"
+                return BotResponse(
+                    f"Input and response language changed to {label}.",
+                    [[("🌐 Language settings", "nav:language"), ("📊 Status", "nav:home_status")]],
+                ) if saved else "Send one task first."
             if text.startswith("/config progress "):
                 value = text.removeprefix("/config progress ").strip().casefold()
                 if value not in {"on", "off"}:

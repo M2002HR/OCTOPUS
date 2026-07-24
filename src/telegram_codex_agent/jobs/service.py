@@ -81,6 +81,7 @@ class JobService:
                         user.preferences_json.get("codex_reasoning_effort", "")
                     ),
                     "response_language": str(user.preferences_json.get("response_language", "")),
+                    "input_language": str(user.preferences_json.get("input_language", "")),
                     "stream_progress": bool(user.preferences_json.get("stream_progress", True)),
                     "log_level": str(user.preferences_json.get("log_level", "info")),
                     "sandbox_mode": str(user.preferences_json.get("sandbox_mode", "")),
@@ -116,11 +117,18 @@ class JobService:
             return (user, conversation) if conversation is not None else None
 
     async def set_user_preference(self, telegram_user_id: int, key: str, value: object) -> bool:
+        return await self.set_user_preferences(telegram_user_id, {key: value})
+
+    async def set_user_preferences(
+        self,
+        telegram_user_id: int,
+        updates: dict[str, object],
+    ) -> bool:
         async with self.sessions() as session:
             user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
             if user is None:
                 return False
-            user.preferences_json = {**user.preferences_json, key: value}
+            user.preferences_json = {**user.preferences_json, **updates}
             await session.commit()
             return True
 

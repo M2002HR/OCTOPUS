@@ -2,7 +2,7 @@ app:
   name: telegram-codex-agent
   environment: ${APP_ENV:-development}
   timezone: ${TZ:-Asia/Tehran}
-  language: fa
+  language: en
   api_host: ${AGENT_API_HOST:-127.0.0.1}
   api_port: ${AGENT_API_PORT:-18090}
   log_level: ${LOG_LEVEL:-INFO}
@@ -59,7 +59,7 @@ artifacts:
 voice:
   enabled: true
   telegram_voice_replies_default: false
-  stt_language: fa
+  stt_language: en
   ffmpeg_binary: ${FFMPEG_BINARY:-ffmpeg}
   legacy_telethon_service: true
 browser:

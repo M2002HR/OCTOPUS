@@ -16,6 +16,8 @@ def test_root_config_loads_from_single_yaml(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.voice.legacy_telethon_service is True
     assert settings.redis.url.endswith("/1")
     assert settings.codex.model == "gpt-5.6-terra"
+    assert settings.app.language == "en"
+    assert settings.voice.stt_language == "en"
     assert settings.workspace.root == Path("/home/mhr/Code")
     assert settings.workspace.discover_git_projects is True
 

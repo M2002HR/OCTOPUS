@@ -225,6 +225,7 @@ class TelegramBotService:
             BotCommand(command="permissions", description="Set Codex permission mode"),
             BotCommand(command="model", description="Choose the Codex model"),
             BotCommand(command="reasoning", description="Choose reasoning effort"),
+            BotCommand(command="language", description="Choose input and response language"),
             BotCommand(command="browser", description="Browser checks and screenshots"),
             BotCommand(command="diff", description="Inspect uncommitted changes"),
             BotCommand(command="review", description="Review the working tree"),

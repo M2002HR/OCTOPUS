@@ -30,7 +30,7 @@ class User(Base, Timestamped):
     username: Mapped[str | None] = mapped_column(String(255))
     first_name: Mapped[str] = mapped_column(String(255), default="")
     last_name: Mapped[str] = mapped_column(String(255), default="")
-    language_code: Mapped[str] = mapped_column(String(16), default="fa")
+    language_code: Mapped[str] = mapped_column(String(16), default="en")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     preferences_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
