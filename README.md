@@ -1,5 +1,20 @@
 # Telegram Voice Agent
 
+## Telegram Codex platform
+
+The repository now also contains `src/telegram_codex_agent`: a persistent Bot
+API agent that uses PostgreSQL, Redis Streams, Ajil, and the local Codex App
+Server. It is deliberately separate from the proven private-call service
+below, so Bot API work cannot disrupt Telegram voice calls.
+
+```bash
+docker compose --profile agent up -d
+curl --noproxy '*' http://127.0.0.1:18090/ready
+```
+
+Choose an explicit project with `/projects` then `/project <slug>` before a
+code task. Detailed operations are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
+
 Telegram Voice Agent is a modular, auditable assistant for one-to-one Telegram calls. It
 uses the existing Telethon string session, PyTgCalls/NTgCalls for private-call media, Ajil
 Unified AI Gateway for speech-to-text and conversation, and Edge TTS for response speech.

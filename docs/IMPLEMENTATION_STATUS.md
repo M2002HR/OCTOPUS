@@ -20,10 +20,10 @@ Evidence is recorded here rather than inferred from design documents.
 
 - [x] Ajil typed client with structured-output/fallback handling
 - [x] Telegram Bot API adapter and normalization primitives
-- [x] Job state machine and Redis/in-memory queue primitives
-- [x] Persistent ingress, Redis delivery, worker state/event persistence, and cancellation
-- [ ] Recovery of stale Redis pending messages and full Codex/tool orchestration
-- [ ] Codex App Server integration
-- [ ] Host tools and project registry
-- [ ] Memory, browser, artifacts, and voice notes
-- [ ] Deterministic E2E and operational documentation
+- [x] Job state machine, Redis Streams delivery, PostgreSQL leases, event persistence, and live cancellation
+- [x] Codex App Server JSONL integration: initialize, thread/turn lifecycle, event capture, safe approval bridge, interrupt, and persistence
+- [x] Explicit project registry and persistent selected-project context
+- [x] Persistent lexical-scoped memory, user commands, retrieval metadata, and outcome recording
+- [x] Live E2E: Ajil direct chat, Codex read-only project task, and cancellation during a live Codex turn
+- [x] Compose API/worker/bot services, migrations, health checks, restart policy, runbook, and systemd templates
+- [ ] Recovery of stale Redis pending messages; browser, artifact, and Bot-media execution paths

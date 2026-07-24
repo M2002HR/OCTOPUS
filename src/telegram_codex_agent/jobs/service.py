@@ -66,6 +66,19 @@ class JobService:
             rows = await session.scalars(select(Project).where(Project.is_active.is_(True)).order_by(Project.slug))
             return [{"slug": row.slug, "name": row.name, "description": row.description} for row in rows]
 
+    async def active_context(self, telegram_user_id: int, telegram_chat_id: int) -> tuple[User, Conversation] | None:
+        async with self.sessions() as session:
+            user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
+            chat = await session.scalar(select(Chat).where(Chat.telegram_chat_id == telegram_chat_id))
+            if user is None or chat is None:
+                return None
+            conversation = await session.scalar(
+                select(Conversation)
+                .where(Conversation.user_id == user.id, Conversation.chat_id == chat.id, Conversation.status == "active")
+                .order_by(Conversation.updated_at.desc())
+            )
+            return (user, conversation) if conversation is not None else None
+
     async def select_project(self, telegram_user_id: int, telegram_chat_id: int, slug: str) -> bool:
         async with self.sessions() as session:
             user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))

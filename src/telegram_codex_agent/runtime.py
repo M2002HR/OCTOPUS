@@ -13,6 +13,7 @@ from telegram_codex_agent.db.session import create_engine, create_session_factor
 from telegram_codex_agent.integrations.ajil import AjilClient
 from telegram_codex_agent.jobs.service import JobService
 from telegram_codex_agent.jobs.worker import Worker
+from telegram_codex_agent.memory import MemoryService
 from telegram_codex_agent.projects import ProjectRegistry
 from telegram_codex_agent.telegram.bot import TelegramBotService
 
@@ -41,6 +42,29 @@ async def run_bot() -> None:
             if text.startswith("/project "):
                 slug = text.removeprefix("/project ").strip()
                 return "پروژه انتخاب شد." if await jobs.select_project(from_user.id, chat.id, slug) else "پروژه پیدا نشد؛ /projects را ببینید."
+            context = await jobs.active_context(from_user.id, chat.id)
+            memory = MemoryService(jobs.sessions)
+            if text.startswith("/remember "):
+                if context is None:
+                    return "ابتدا یک پیام عادی بفرستید تا گفتگو ساخته شود."
+                content = text.removeprefix("/remember ").strip()
+                memory_id = await memory.remember(
+                    context[0].id,
+                    content,
+                    conversation_id=context[1].id,
+                    project_id=context[1].project_id,
+                )
+                return f"ثبت شد. شناسهٔ حافظه: {memory_id}"
+            if text == "/memory":
+                if context is None:
+                    return "حافظه‌ای برای این گفتگو وجود ندارد."
+                rows = await memory.list(context[0].id)
+                return "\n".join(f"• {row.id}: {row.content[:140]}" for row in rows) or "حافظه‌ای ثبت نشده است."
+            if text.startswith("/forget "):
+                if context is None:
+                    return "شناسهٔ حافظه نامعتبر است."
+                memory_id = text.removeprefix("/forget ").strip()
+                return "حذف شد." if await memory.forget(context[0].id, memory_id) else "حافظه پیدا نشد."
             job_id = await jobs.create_from_text(from_user.id, chat.id, text or "[media message]")
             return f"درخواست ثبت شد و در حال پردازش است. شناسهٔ کار: {job_id}"
 

@@ -19,6 +19,7 @@ from telegram_codex_agent.db.models import (
     Conversation,
     Job,
     JobEventRow,
+    MemoryRecord,
     Message,
     Project,
 )
@@ -38,6 +39,7 @@ from telegram_codex_agent.jobs.models import (
     PlannedStep,
 )
 from telegram_codex_agent.jobs.queue import RedisStreamJobQueue
+from telegram_codex_agent.memory import MemoryService
 from telegram_codex_agent.projects import ProjectRegistry
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,19 @@ class Worker:
                 if not project_path.is_dir():
                     raise ValueError("selected project root is unavailable on this host")
             await self._transition(session, job, JobState.MEMORY_RETRIEVAL, "retrieving relevant memory")
+            conversation = await session.get(Conversation, job.conversation_id)
+            if conversation is not None and self.settings.memory.enabled:
+                memories = await MemoryService(self.sessions).retrieve(
+                    conversation.user_id,
+                    job.objective,
+                    conversation_id=job.conversation_id,
+                    project_id=job.project_id,
+                    limit=self.settings.memory.retrieval_limit,
+                )
+                job.metadata_json = {
+                    **job.metadata_json,
+                    "memory_context": [row.content[:1000] for row in memories],
+                }
             await self._transition(session, job, JobState.CLASSIFYING, "classifying requested work")
             intent = self._classify(job.objective)
             job.intent = intent.value
@@ -213,6 +228,18 @@ class Worker:
                 if conversation is not None:
                     chat = await session.get(Chat, conversation.chat_id)
                     telegram_chat_id = chat.telegram_chat_id if chat else None
+                    if self.settings.memory.enabled:
+                        session.add(
+                            MemoryRecord(
+                                user_id=conversation.user_id,
+                                conversation_id=conversation.id,
+                                project_id=job.project_id,
+                                memory_type="outcome",
+                                title="job outcome",
+                                content=f"Objective: {job.objective}\nResult: {content}"[:20_000],
+                                importance=35,
+                            )
+                        )
             await session.commit()
         if telegram_chat_id is not None:
             await self._deliver(telegram_chat_id, content)
