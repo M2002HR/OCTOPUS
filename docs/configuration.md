@@ -16,6 +16,9 @@ or shell history.
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_STRING_SESSION` | required | Existing authorized Telethon account. |
 | `TELEGRAM_PROXY_ENABLED` | `false` | Enables the Telethon signaling proxy. |
 | `TELEGRAM_PROXY_TYPE` | `socks5` | Proxy scheme supported by Telethon/PySocks. |
+| `WORKSPACE_ROOT` | `/home/mhr/Code` | Container-visible root whose immediate Git workspaces can be selected from Telegram. |
+| `WORKSPACE_ROOT_HOST` | `/home/mhr/Code` | Host path mounted read/write at `WORKSPACE_ROOT` for Codex execution. |
+| `CODEX_HTTP_PROXY_URL` | empty | HTTP CONNECT proxy used by Codex App Server outbound requests. |
 | `TELEGRAM_PROXY_HOST`, `TELEGRAM_PROXY_PORT` | empty, `0` | Proxy endpoint when enabled. |
 | `TELEGRAM_PROXY_USERNAME`, `TELEGRAM_PROXY_PASSWORD`, `TELEGRAM_PROXY_RDNS` | empty, `true` | Optional proxy credentials and remote DNS choice. |
 | `TELEGRAM_PROXY_HOST_DOCKER`, `TELEGRAM_PROXY_PORT_DOCKER` | `host.docker.internal`, `0` | Container-specific proxy endpoint. Compose maps these over the normal host/port for `voice-agent`. |

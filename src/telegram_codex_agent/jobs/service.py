@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_codex_agent.db.models import (
     Chat,
+    CodexThread,
     Conversation,
     Job,
     JobEventRow,
@@ -81,6 +82,9 @@ class JobService:
                     ),
                     "response_language": str(user.preferences_json.get("response_language", "")),
                     "stream_progress": bool(user.preferences_json.get("stream_progress", True)),
+                    "log_level": str(user.preferences_json.get("log_level", "info")),
+                    "sandbox_mode": str(user.preferences_json.get("sandbox_mode", "")),
+                    "approval_policy": str(user.preferences_json.get("approval_policy", "")),
                     **(metadata or {}),
                 },
             )
@@ -117,6 +121,97 @@ class JobService:
             if user is None:
                 return False
             user.preferences_json = {**user.preferences_json, key: value}
+            await session.commit()
+            return True
+
+    async def new_conversation(self, telegram_user_id: int, telegram_chat_id: int) -> str | None:
+        async with self.sessions() as session:
+            user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
+            chat = await session.scalar(select(Chat).where(Chat.telegram_chat_id == telegram_chat_id))
+            if user is None or chat is None:
+                return None
+            current = await session.scalar(
+                select(Conversation)
+                .where(
+                    Conversation.user_id == user.id,
+                    Conversation.chat_id == chat.id,
+                    Conversation.status == "active",
+                )
+                .order_by(Conversation.updated_at.desc())
+            )
+            project_id = current.project_id if current else None
+            if current:
+                current.status = "closed"
+            conversation = Conversation(
+                user_id=user.id,
+                chat_id=chat.id,
+                project_id=project_id,
+                title="New Codex session",
+            )
+            session.add(conversation)
+            await session.commit()
+            return conversation.id
+
+    async def list_codex_sessions(
+        self, telegram_user_id: int, telegram_chat_id: int, limit: int = 12
+    ) -> list[dict[str, object]]:
+        async with self.sessions() as session:
+            rows = await session.execute(
+                select(CodexThread, Conversation, Project)
+                .join(Conversation, CodexThread.conversation_id == Conversation.id)
+                .join(User, Conversation.user_id == User.id)
+                .join(Chat, Conversation.chat_id == Chat.id)
+                .outerjoin(Project, CodexThread.project_id == Project.id)
+                .where(
+                    User.telegram_user_id == telegram_user_id,
+                    Chat.telegram_chat_id == telegram_chat_id,
+                )
+                .order_by(CodexThread.updated_at.desc())
+                .limit(limit)
+            )
+            return [
+                {
+                    "id": thread.id,
+                    "thread_id": thread.codex_thread_id,
+                    "project": project.name if project else "No project",
+                    "model": thread.model,
+                    "active": conversation.status == "active",
+                    "updated_at": thread.updated_at,
+                }
+                for thread, conversation, project in rows
+            ]
+
+    async def resume_codex_session(
+        self, telegram_user_id: int, telegram_chat_id: int, session_id: str
+    ) -> bool:
+        async with self.sessions() as session:
+            target = await session.scalar(
+                select(CodexThread)
+                .join(Conversation, CodexThread.conversation_id == Conversation.id)
+                .join(User, Conversation.user_id == User.id)
+                .join(Chat, Conversation.chat_id == Chat.id)
+                .where(
+                    CodexThread.id == session_id,
+                    User.telegram_user_id == telegram_user_id,
+                    Chat.telegram_chat_id == telegram_chat_id,
+                )
+            )
+            if target is None:
+                return False
+            conversation = await session.get(Conversation, target.conversation_id)
+            if conversation is None:
+                return False
+            active_rows = await session.scalars(
+                select(Conversation).where(
+                    Conversation.user_id == conversation.user_id,
+                    Conversation.chat_id == conversation.chat_id,
+                    Conversation.status == "active",
+                )
+            )
+            for row in active_rows:
+                row.status = "closed"
+            conversation.status = "active"
+            target.status = "active"
             await session.commit()
             return True
 

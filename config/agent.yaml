@@ -70,6 +70,10 @@ memory:
   enabled: true
   summarize_after_messages: 30
   retrieval_limit: 8
+workspace:
+  root: ${WORKSPACE_ROOT:-/home/mhr/Code}
+  discover_git_projects: true
+  max_depth: 1
 projects:
   - slug: octopus
     name: OCTOPUS

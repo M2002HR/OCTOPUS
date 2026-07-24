@@ -143,6 +143,12 @@ class MemoryConfig(BaseModel):
     retrieval_limit: int = 8
 
 
+class WorkspaceConfig(BaseModel):
+    root: Path = Path("/home/mhr/Code")
+    discover_git_projects: bool = True
+    max_depth: int = 1
+
+
 class Settings(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     telegram: TelegramConfig
@@ -155,6 +161,7 @@ class Settings(BaseModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     projects: list[dict[str, Any]] = Field(default_factory=list)
     config_path: Path = Path("config/agent.yaml")
 

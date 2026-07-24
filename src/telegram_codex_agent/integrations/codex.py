@@ -100,6 +100,7 @@ class CodexAppServer:
             },
             timeout=self.config.startup_timeout_seconds,
         )
+        await self._write({"jsonrpc": "2.0", "method": "initialized", "params": {}})
 
     async def close(self) -> None:
         process = self.process
@@ -160,6 +161,30 @@ class CodexAppServer:
         if not isinstance(thread_id, str) or not thread_id:
             raise CodexProtocolError(f"thread/start did not return a thread id: {result!r}")
         return CodexThreadHandle(thread_id, absolute_cwd, str(result.get("model") or self.config.model))
+
+    async def resume_thread(self, thread_id: str, cwd: Path | str) -> CodexThreadHandle:
+        """Resume a persisted App Server thread in its registered workspace."""
+        absolute_cwd = str(Path(cwd).resolve())
+        result = await self.request(
+            "thread/resume",
+            {
+                "threadId": thread_id,
+                "cwd": absolute_cwd,
+                "model": self.config.model,
+                "approvalPolicy": self.config.approval_policy,
+                "sandbox": self.config.sandbox_mode,
+            },
+            timeout=self.config.startup_timeout_seconds,
+        )
+        thread = result.get("thread", {})
+        resumed_id = thread.get("id") or thread_id
+        if not isinstance(resumed_id, str) or not resumed_id:
+            raise CodexProtocolError(f"thread/resume did not return a thread id: {result!r}")
+        return CodexThreadHandle(
+            resumed_id,
+            absolute_cwd,
+            str(result.get("model") or thread.get("model") or self.config.model),
+        )
 
     async def run_turn(
         self,
