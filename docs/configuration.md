@@ -1,138 +1,310 @@
 # Configuration reference
 
-The root `.env` is loaded by the Python process and passed to the Ajil Docker service. It is the
-only runtime configuration file. Start from `.env.example`, or run
-`python scripts/bootstrap_env.py` once to safely merge the approved local Telegram and Ajil
-settings without printing secrets. The bootstrap script refuses to overwrite an existing `.env`
-and writes it with `0600` permissions.
+## Sources and precedence
 
-Never commit `.env`, copy its values into a submodule, or include them in logs, support tickets,
-or shell history.
+OCTOPUS has exactly two root configuration sources:
 
-## Telegram Codex runtime preferences
+1. `config/agent.yaml`: checked-in non-secret product policy and defaults.
+2. `.env`: ignored secrets, credentials, machine paths, ports, and deployment overrides.
 
-The Bot stores per-user runtime preferences in PostgreSQL. Open `/config` and
-use the Model, Reasoning, Language, Permissions, and Logs selectors; `/status`
-shows the values that the next job will snapshot.
+`load_settings` loads the root `.env` without overwriting already exported process variables,
+reads `CONFIG_PATH` (default `config/agent.yaml`), expands `${NAME:-default}`, then validates with
+Pydantic. An explicitly empty environment value uses the YAML fallback.
 
-Language selection applies to both voice-note transcription and AI responses.
-English is the default. Model and reasoning selections are sent as explicit
-`turn/start` overrides, including when an existing Codex thread is resumed.
-Fast mode is also a per-user preference. `/fast` toggles it, while `/fast on`,
-`/fast off`, and `/fast status` provide explicit controls. Enabling it first
-checks the live Codex model catalog, then snapshots the advertised Fast tier
-onto the job and sends it to `thread/start`, `thread/resume`, and `turn/start`.
-The currently installed GPT-5.6 catalog advertises this tier as `priority`.
-At log level `info` or `debug`, public Codex commentary is forwarded to
-Telegram; private reasoning events are never forwarded.
+The Telethon compatibility package validates its environment contract directly from the same root
+`.env`. Compose injects container URLs/mounts but does not introduce another env file.
 
-`/status` combines the live Codex account quota with persisted
-`thread/tokenUsage/updated` notifications for the selected session. `/usage`
-reads `account/rateLimits/read` from the authenticated local Codex App Server
-and shows the weekly remaining percentage and reset time. The result is cached
-for one minute, with a clearly labelled last-known fallback if Codex is
-temporarily unreachable.
-`/history` is scoped to the requesting Telegram user/chat and shows the active
-thread's prompts, results, and job-event log. The `/resume` picker displays
-selection and execution state independently.
+Start from `.env.example` or use `scripts/bootstrap_env.py`; it refuses to overwrite `.env`, writes
+mode `0600`, and never prints secret values.
 
-## Telegram and call policy
+Never commit `.env`, create a submodule `.env`, put credentials in YAML, or paste values into
+documentation/logs.
+
+## `config/agent.yaml`
+
+### Application and Telegram
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `app.name` | `telegram-codex-agent` | Product/service name |
+| `app.environment` | `development` | Environment; production disables API docs |
+| `app.timezone` | `Asia/Tehran` | Display/operational timezone |
+| `app.language` | `en` | Control-plane response default |
+| `app.api_host`, `app.api_port` | `127.0.0.1`, `18090` | Agent API bind |
+| `app.log_level`, `app.log_format` | `INFO`, `json` | Process logging |
+| `telegram.transport` | `polling` | `polling` or `webhook` |
+| `telegram.bot_token_env` | `TELEGRAM_BOT_TOKEN` | Secret indirection |
+| `telegram.allowed_user_ids/chat_ids` | empty | Enforced YAML numeric allowlists; empty permits all users/chats |
+| `telegram.webhook_public_url` | empty | Required when webhook transport is chosen |
+| `telegram.webhook_secret_env` | `TELEGRAM_WEBHOOK_SECRET` | Webhook secret indirection |
+| `telegram.default_parse_mode` | `HTML` | Bot formatting |
+| `telegram.progress_edit_interval_seconds` | `3` | Live edit throttle |
+| `telegram.max_message_length` | `3800` | Safe Telegram chunk size |
+| `telegram.bot_proxy_url_env` | `TELEGRAM_BOT_PROXY_URL` | Bot-only proxy indirection |
+
+The two similarly named values retained in `.env.example` are compatibility placeholders and are
+not projected into the current YAML model. Put the active numeric Bot allowlists in
+`config/agent.yaml`. Keep them distinct from Telethon peer IDs.
+
+### Database, Redis, Ajil
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `database.url` | local PostgreSQL URL | SQLAlchemy async source of truth |
+| `database.echo` | `false` | SQL logging |
+| `database.pool_size` | `8` | Async pool size |
+| `redis.url` | `redis://127.0.0.1:16379/1` | Agent Redis DB 1 |
+| `redis.stream` | `telegram_codex_agent.jobs` | Job Stream |
+| `redis.consumer_group` | `telegram_codex_agent.workers` | Worker group |
+| `ajil.base_url` | `http://127.0.0.1:8080` | Host Ajil URL |
+| `ajil.auth_token_env` | `UAG_AUTH_TOKEN` | Secret indirection |
+| `ajil.auth_header_name` | `x-api-token` | Client auth header |
+| `ajil.timeout_seconds` | `45` | Request timeout |
+| `ajil.planner.model` | empty | Ajil-selected/default planner model |
+| `ajil.planner.temperature` | `0` | Deterministic planning |
+| `ajil.planner.max_retries` | `2` | Structured plan retries |
+| `ajil.planner.reject_local_fallback` | `true` | Do not silently fake a remote plan |
+
+Ajil itself uses Redis DB 0. The agent uses DB 1.
+
+### Codex and jobs
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `codex.binary` | `codex` | App Server executable |
+| `codex.model` | `gpt-5.6-terra` | Default model |
+| `codex.reasoning_effort` | `high` | Default effort |
+| `codex.service_tier` | null | Standard unless per-user Fast resolves a tier |
+| `codex.approval_policy` | `never` | `never`, `on-request`, or `untrusted` |
+| `codex.sandbox_mode` | `danger-full-access` | Development default |
+| `codex.network_access` | `true` | Codex network policy |
+| `codex.startup_timeout_seconds` | `30` | App Server startup/RPC bound |
+| `jobs.worker_count` | `1` | Declared worker count |
+| `jobs.lease_seconds` | `30` | PostgreSQL lease |
+| `jobs.heartbeat_seconds` | `5` | Heartbeat interval |
+| `jobs.timeout_seconds` | `3600` | Whole job timeout |
+| `jobs.step_timeout_seconds` | `900` | Planned step timeout |
+| `jobs.output_byte_cap` | `1048576` | Captured output/event bound |
+| `jobs.recovery_policy` | `resume_or_fail` | Restart reconciliation |
+
+Per-user model, reasoning, Fast, permissions, and language settings override defaults only through
+a job snapshot. They do not rewrite YAML or `.env`.
+
+### Artifacts, browser, memory, workspace
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `artifacts.root` | `./data/artifacts` | Managed artifact root |
+| `artifacts.retention_days` | `30` | Expiry metadata; external cleanup needed while scheduler is disabled |
+| `artifacts.telegram_direct_upload_max_bytes` | `47185920` | Bot direct upload cap |
+| `browser.default_mode` | `isolated_headless` | Preferred browser mode |
+| `browser.headless` | `true` | Default headless flag |
+| `browser.cdp_endpoint` | `http://127.0.0.1:9222` | Chrome Lab/CDP endpoint |
+| `memory.enabled` | `true` | Memory service |
+| `memory.summarize_after_messages` | `30` | Compaction policy threshold |
+| `memory.retrieval_limit` | `8` | Scoped retrieval cap |
+| `workspace.root` | `/home/mhr/Code` | Trusted project discovery root |
+| `workspace.discover_git_projects` | `true` | Discover Git directories |
+| `workspace.max_depth` | `1` | Discovery depth |
+| `projects[]` | OCTOPUS | Explicit trusted registry with root and test/lint policy |
+
+### Voice bridge policy
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `voice.enabled` | `true` | Platform voice availability |
+| `voice.telegram_voice_replies_default` | `false` | Bot response default |
+| `voice.stt_language` | `en` | Bot voice-note STT default |
+| `voice.ffmpeg_binary` | `ffmpeg` | Platform media binary |
+| `voice.legacy_telethon_service` | `true` | Preserve compatibility subsystem |
+| `voice.completion_calls.enabled` | `true` | Global completion-call availability |
+| `.stream` | `telegram_codex_agent.completion_calls` | Completion Stream |
+| `.consumer_group` | `voice_agent.completion_calls` | Primary voice group |
+| `.repeat_count` | exactly `3` | Schema-fixed repetitions |
+| `.max_message_characters` | `240` | Spoken status cap |
+| `.queue_retention_seconds` | `2592000` | Dedup retention |
+| `.max_queue_length` | `10000` | Approximate Stream cap |
+
+## Root environment groups
+
+`.env.example` is the exhaustive variable-name inventory. The tables below explain ownership and
+interaction; Ajil provider internals retain their authoritative semantics in the pinned submodule.
+
+### Root, platform, storage
+
+| Variables | Purpose |
+| --- | --- |
+| `APP_ENV`, `CONFIG_PATH`, `TZ`, `HOSTNAME`, `LOG_LEVEL`, `LOG_FORMAT` | Process policy/identity |
+| `AGENT_API_HOST`, `AGENT_API_PORT` | Host API |
+| `POSTGRES_*`, `DATABASE_URL` | PostgreSQL |
+| `REDIS_*`, `REDIS_URL` | Agent Redis DB 1 |
+| `AJIL_BASE_URL`, `AJIL_PORT` | Host Ajil endpoint |
+| `RUNTIME_DIR`, `ARTIFACT_ROOT`, `ARTIFACT_RETENTION_DAYS` | Local data roots/retention |
+| `DOCKER_HOST`, `COMPOSE_PROJECT_NAME` | Docker deployment |
+
+Use a strong non-example PostgreSQL password and keep `DATABASE_URL` consistent with it.
+
+### Telegram Bot
+
+| Variable | Default/policy |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | required secret |
+| `TELEGRAM_ALLOWED_USER_IDS`, `TELEGRAM_ALLOWED_CHAT_IDS` | compatibility placeholders; active lists are YAML policy |
+| `TELEGRAM_TRANSPORT` | `polling` |
+| `TELEGRAM_WEBHOOK_PUBLIC_URL`, `TELEGRAM_WEBHOOK_SECRET` | webhook only |
+| `TELEGRAM_BOT_PROXY_URL` | Bot HTTPS proxy; independent from all other proxies |
+
+### Codex and workspace
+
+| Variable | Default/policy |
+| --- | --- |
+| `CODEX_BINARY` | `codex` |
+| `CODEX_HOME_HOST` | host authenticated Codex home |
+| `CODEX_HOST_RUNTIME` | host Node/Codex runtime mounted read-only |
+| `AGENT_IMAGE` | `octopus-agent-platform:latest` |
+| `CODEX_MODEL` | `gpt-5.6-terra` |
+| `CODEX_REASONING_EFFORT` | `high` |
+| `CODEX_APPROVAL_POLICY` | `never` |
+| `CODEX_SANDBOX_MODE` | `danger-full-access` |
+| `CODEX_NETWORK_ACCESS` | `true` |
+| `CODEX_HTTP_PROXY_URL` | App Server HTTP CONNECT proxy |
+| `CODEX_ACCESS_TOKEN`, `OPENAI_API_KEY` | optional secrets; prefer mounted authenticated home |
+| `PROJECT_OCTOPUS_ROOT` | registered host project |
+| `WORKSPACE_ROOT`, `WORKSPACE_ROOT_HOST` | container and host trusted workspace roots |
+
+`PLAYWRIGHT_BROWSERS_PATH`, `PLAYWRIGHT_HEADLESS`, `CHROME_CDP_ENDPOINT`, `DISPLAY`,
+`XDG_SESSION_TYPE`, `FFMPEG_BINARY`, and `FFPROBE_BINARY` support browser/artifact tasks.
+
+### Per-user Bot preferences
+
+Stored in PostgreSQL, not `.env`:
+
+- `codex_model`
+- `codex_reasoning_effort`
+- `codex_fast_mode` and resolved `codex_service_tier`
+- `sandbox_mode`/permission selection
+- `input_language`, `response_language`
+- `log_level`, `stream_progress`
+- `completion_call_enabled`
+- selected project/session context.
+
+`/status` shows effective next-job values. `/usage` is Codex account quota; it is not a preference.
+
+### Primary Telethon and calls
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_STRING_SESSION` | required | Existing authorized Telethon account. |
-| `TELEGRAM_PROXY_ENABLED` | `false` | Enables the Telethon signaling proxy. |
-| `TELEGRAM_PROXY_TYPE` | `socks5` | Proxy scheme supported by Telethon/PySocks. |
-| `WORKSPACE_ROOT` | `/home/mhr/Code` | Container-visible root whose immediate Git workspaces can be selected from Telegram. |
-| `WORKSPACE_ROOT_HOST` | `/home/mhr/Code` | Host path mounted read/write at `WORKSPACE_ROOT` for Codex execution. |
-| `CODEX_HTTP_PROXY_URL` | empty | HTTP CONNECT proxy used by Codex App Server outbound requests. |
-| `TELEGRAM_PROXY_HOST`, `TELEGRAM_PROXY_PORT` | empty, `0` | Proxy endpoint when enabled. |
-| `TELEGRAM_PROXY_USERNAME`, `TELEGRAM_PROXY_PASSWORD`, `TELEGRAM_PROXY_RDNS` | empty, `true` | Optional proxy credentials and remote DNS choice. |
-| `TELEGRAM_PROXY_HOST_DOCKER`, `TELEGRAM_PROXY_PORT_DOCKER` | `host.docker.internal`, `0` | Container-specific proxy endpoint. Compose maps these over the normal host/port for `voice-agent`. |
-| `VOICE_AGENT_ALLOWED_PEER_IDS` | empty | Required comma-separated numeric allowlist for outbound calls. |
-| `VOICE_AGENT_TEST_PEER_USERNAME` | empty | Convenience value only; the CLI still requires `--username`. |
-| `VOICE_AGENT_INBOUND_ENABLED` | `false` | Must be explicitly `true` before `serve` starts the persistent inbound service. |
-| `VOICE_AGENT_INBOUND_USERNAMES` | empty | Comma-separated inbound callers. Each is resolved at startup and must also be in the numeric allowlist. |
-| `VOICE_AGENT_REQUIRE_DISCLOSURE` | `true` | Announces automated processing when a call connects. |
-| `VOICE_AGENT_CALL_TIMEOUT_SEC` | `120` | PyTgCalls connection timeout; minimum `10`. |
+| `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_STRING_SESSION` | required | Primary user authorization |
+| `TELEGRAM_PROXY_ENABLED` | `false` | Signaling proxy |
+| `TELEGRAM_PROXY_TYPE` | `socks5` | PySocks/Telethon scheme |
+| `TELEGRAM_PROXY_HOST`, `TELEGRAM_PROXY_PORT` | empty, `0` | Host endpoint |
+| `TELEGRAM_PROXY_USERNAME/PASSWORD/RDNS` | empty/true | Optional credentials/DNS |
+| `TELEGRAM_PROXY_HOST_DOCKER/PORT_DOCKER` | host gateway/`0` | Container endpoint |
+| `VOICE_AGENT_ALLOWED_PEER_IDS` | required for calls | Numeric outbound/inbound allowlist |
+| `VOICE_AGENT_TEST_PEER_USERNAME` | empty | Explicit CLI test convenience |
+| `VOICE_AGENT_INBOUND_ENABLED` | `false` | Persistent inbound call enable |
+| `VOICE_AGENT_INBOUND_USERNAMES` | empty | Startup-resolved caller list |
+| `VOICE_AGENT_REQUIRE_DISCLOSURE` | code default `true`; example `false` | Automated processing disclosure |
+| `VOICE_AGENT_CALL_TIMEOUT_SEC` | `120` | Connection timeout |
 
-The same Telethon authorization must not be active in another client during a call. A proxy used
-by Telethon carries signaling only; it does not prove that the host can reach Telegram media
-reflectors. See the VoIP section of [Troubleshooting](troubleshooting.md).
+`VOICE_AGENT_INBOUND_USERNAME` is a legacy one-user fallback. The same primary session must not be
+active in another process.
 
-The inbound server accepts only one active call and immediately declines every caller whose numeric
-ID is absent from the startup-resolved `VOICE_AGENT_INBOUND_USERNAMES` list. Changing the list
-requires a service restart; this avoids accepting a renamed or unverified account by string
-comparison at call time. `VOICE_AGENT_INBOUND_USERNAME` is accepted only as a one-user migration
-fallback when the new list is absent.
-
-## Voice behavior
+### Completion calls
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `VOICE_AGENT_LANGUAGE` | `en` | English STT language hint. |
-| `VOICE_AGENT_SYSTEM_PROMPT` | general assistant prompt | System instruction sent to Ajil chat. |
-| `VOICE_AGENT_MAX_HISTORY_MESSAGES` | `12` | Per-call rolling user/assistant history count. |
-| `VOICE_AGENT_MAX_TURN_SECONDS` | `45` | Hard upper bound for one detected utterance. |
-| `VOICE_AGENT_AUDIO_SAMPLE_RATE` | `48000` | Native PCM sample rate requested from PyTgCalls. |
-| `VOICE_AGENT_AUDIO_CHANNELS` | `1` | Native PCM channels (`1` or `2`). |
-| `VOICE_AGENT_VAD_START_RMS` | `350` | Energy needed to begin a candidate utterance. |
-| `VOICE_AGENT_VAD_CONTINUE_RMS` | `240` | Lower continuation energy; must not exceed start RMS. |
-| `VOICE_AGENT_VAD_START_MS` | `80` | Minimum sustained speech before an utterance starts. |
-| `VOICE_AGENT_VAD_END_SILENCE_MS` | `1200` | Continuous quiet required to finish an utterance. |
-| `VOICE_AGENT_VAD_MIN_UTTERANCE_MS` | `250` | Shorter audio is discarded as noise. |
-| `VOICE_AGENT_VAD_PRE_ROLL_MS` | `200` | Audio preserved immediately before detected speech. |
+| `CODEX_COMPLETION_CALLS_ENABLED` | `true` | Global availability; users remain opted out |
+| `CODEX_COMPLETION_CALL_STREAM` | standard stream | Must match YAML |
+| `CODEX_COMPLETION_CALL_CONSUMER_GROUP` | voice group | Must match YAML |
+| `CODEX_COMPLETION_CALL_REDIS_URL` | host DB 1 | Compose overrides voice to `redis://redis:6379/1` |
+| `CODEX_COMPLETION_CALL_RETRY_ATTEMPTS` | `3` | Bounded attempts |
+| `CODEX_COMPLETION_CALL_RETRY_DELAY_SEC` | `10` | Retry delay |
+| `CODEX_COMPLETION_CALL_POST_PLAYBACK_SEC` | `2` | Hangup guard |
 
-`VOICE_AGENT_SILENCE_MS` remains accepted as a legacy fallback only when
-`VOICE_AGENT_VAD_END_SILENCE_MS` is absent. Prefer the latter. Detailed tuning guidance is in
+See [Completion calls](completion-calls.md).
+
+### Voice language, VAD, audio, and chat
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `VOICE_AGENT_LANGUAGE` | `en` | Enforced English call STT |
+| `VOICE_AGENT_SYSTEM_PROMPT` | English direct assistant | No self-introduction |
+| `VOICE_AGENT_MAX_HISTORY_MESSAGES` | `12` | Per-call rolling context |
+| `VOICE_AGENT_MAX_TURN_SECONDS` | `45` | Utterance cap |
+| `VOICE_AGENT_MAX_VOICE_REPLY_CHARS` | `480` | Spoken reply cap |
+| `VOICE_AGENT_VAD_START_RMS` | `350` | Speech start energy |
+| `VOICE_AGENT_VAD_CONTINUE_RMS` | `240` | Continuation energy; ≤ start |
+| `VOICE_AGENT_VAD_START_MS` | `80` | Sustained start |
+| `VOICE_AGENT_VAD_END_SILENCE_MS` | `1200` | Turn-ending silence |
+| `VOICE_AGENT_VAD_MIN_UTTERANCE_MS` | `250` | Noise rejection |
+| `VOICE_AGENT_VAD_PRE_ROLL_MS` | `200` | Preserve initial audio |
+| `VOICE_AGENT_AUDIO_SAMPLE_RATE` | `48000` | PCM rate |
+| `VOICE_AGENT_AUDIO_CHANNELS` | `1` | `1` or `2` |
+
+`VOICE_AGENT_SILENCE_MS` is a legacy fallback only. See
 [Voice turn detection](voice-turn-detection.md).
 
-## Ajil, Edge TTS, and Docker
+### Private Telethon messaging
+
+`VOICE_AGENT_MESSAGE_ENABLED`, `VOICE_AGENT_MESSAGE_USERNAME`,
+`VOICE_AGENT_MESSAGE_DEFAULT_RESPONSE`, `VOICE_AGENT_MESSAGE_MAX_MEDIA_BYTES`,
+`VOICE_AGENT_MESSAGE_MEDIA_LIBRARY_DIR`, `VOICE_AGENT_MESSAGE_MEDIA_MANIFEST`,
+`VOICE_AGENT_MESSAGE_VISION_ENABLED`, `VOICE_AGENT_MESSAGE_STT_LANGUAGE`,
+`VOICE_AGENT_VISION_MODELS`, and `VOICE_AGENT_VISION_PROVIDERS` are documented in
+[Private messaging](messaging.md). Message STT is currently enforced to `en`.
+
+### Ajil client, providers, and TTS
+
+Root clients use:
+
+- `UAG_BASE_URL`, endpoints, auth token/header, timeout;
+- `AI_CHAT_MODELS`, `AI_CHAT_PROVIDERS`;
+- `AI_TRANSCRIPTION_PROVIDER`, `AI_TRANSCRIPTION_MODELS`;
+- `EDGE_TTS_VOICE`, `EDGE_TTS_RATE`, `FFMPEG_BIN`.
+
+The root also passes `UAG_*` app/logging/admin/router/Redis/proxy/build values and
+Gemini/Groq/Pollinations provider keys/policies to the pinned gateway. Backward-compatible
+`GROQ_*`, `GEMINI_*`, and `POLLINATIONS_*` aliases exist for nested providers. Do not duplicate
+their moving internal semantics here; `.env.example` lists every supported root variable and
+`modules/ajil_uag` documents provider behavior.
+
+### Voice storage and privacy
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `UAG_BASE_URL` | `http://127.0.0.1:8080` | URL used by a bare-metal agent. Docker overrides it to `http://uag-gateway:8080`. |
-| `UAG_CHAT_ENDPOINT` | `/v1/chat/completions` | Ajil chat route. |
-| `UAG_AUDIO_TRANSCRIPTIONS_ENDPOINT` | `/v1/audio/transcriptions` | Ajil STT route. |
-| `UAG_AUTH_TOKEN`, `UAG_AUTH_HEADER_NAME` | empty, `x-api-token` | Client authentication for Ajil if enabled. |
-| `UAG_TIMEOUT_SEC` | `45` | HTTP timeout per STT/chat request. |
-| `AI_CHAT_MODELS`, `AI_CHAT_PROVIDERS` | empty | Ajil chat routing choices. |
-| `AI_TRANSCRIPTION_PROVIDER`, `AI_TRANSCRIPTION_MODELS` | empty | Ajil STT provider configuration; the direct STT route selects its configured provider/model. |
-| `EDGE_TTS_VOICE`, `EDGE_TTS_RATE` | `en-US-AndrewMultilingualNeural`, `+0%` | English Edge TTS voice and rate. |
-| `FFMPEG_BIN` | `ffmpeg` | Ogg/Opus conversion executable. |
-| `VOICE_AGENT_UAG_PORT` | `18081` | Host port for the Compose Ajil gateway. |
-| `UAG_PROXY_URL_DOCKER` | empty | Docker-reachable proxy URL for Ajil; separate from a host-loopback URL. |
-| `UAG_DOCKER_BUILD_NETWORK`, `UAG_BUILD_*`, `UAG_PIP_*` | empty | Optional controlled build-network/proxy/package-index settings. |
+| `AUDIT_DATABASE_PATH` | `runtime/voice_agent.sqlite3` | SQLite audit/content store |
+| `AUDIT_JSONL_PATH` | `runtime/events.jsonl` | Content-free event mirror |
+| `VOICE_AGENT_RECORDING_MODE` | `transcript_only` | `off` or sensitive transcript/reply rows |
 
-Ajil itself supports many `UAG_*` provider, router, retry, logging, and Redis variables. Keep all
-of them in this root `.env`; Compose forwards the file to `uag-gateway`. Their semantics are owned
-by the pinned Ajil submodule. Do not create `vendor/Ajil_Unified_AI_Gateway/.env`.
+Both modes remove temporary call media. The application does not claim encryption at rest.
 
-## Storage and diagnostics
+### Media overlay
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `RUNTIME_DIR` | `runtime` | Local runtime root. Docker maps it to `/runtime`. |
-| `AUDIT_DATABASE_PATH` | `runtime/voice_agent.sqlite3` | SQLite audit and optional transcript database. |
-| `AUDIT_JSONL_PATH` | `runtime/events.jsonl` | Content-free JSONL event mirror. |
-| `VOICE_AGENT_RECORDING_MODE` | `transcript_only` | `transcript_only` stores transcript/reply text in SQLite; `off` omits that table’s rows. Both modes delete call media on close. |
-| `APP_ENV`, `LOG_LEVEL` | `development`, `INFO` | Application environment/log verbosity conventions. |
+All `VOICE_AGENT_MEDIA_*` variables configure UDP capture, GOST, SSH, proxy endpoint, relay,
+credentials, image, and STUN preflight. See [UDP media overlay](media-overlay.md). They are
+independent from Bot, Codex, Ajil, and Telethon signaling proxies.
 
-Transcript text is sensitive data. Protect the database, establish an external retention policy,
-and use `off` where transcript storage is not authorized. Encryption-at-rest is intentionally not
-claimed by this project; use encrypted host storage or a managed encrypted volume if required.
+### Live test flags
 
-## UDP media overlay
+`RUN_LIVE_AJIL_TESTS`, `RUN_LIVE_CODEX_TESTS`, `RUN_LIVE_TELEGRAM_TESTS`,
+`RUN_LIVE_PLAYWRIGHT_TESTS`, and `TEST_TELEGRAM_CHAT_ID` opt into external tests. Ordinary tests
+must not require credentials.
 
-The full `VOICE_AGENT_MEDIA_*` configuration surface is documented in
-[media-overlay.md](media-overlay.md). It is deliberately independent from Telegram signaling
-proxy values: media is captured by a dedicated network sidecar, then reaches the required proxy
-through the SSH sidecar. All values, including the relay credential, are set from the root `.env`.
+## Restart rules
 
-## Private messaging
+Per-user Bot preferences need no restart and affect new jobs. Restart affected services after
+changing credentials, URLs, proxies, allowlists, workspace mounts, global policy, VAD/TTS, or
+completion Stream/group. Rebuild when source/dependencies/images change.
 
-`VOICE_AGENT_MESSAGE_*` settings control the same persistent `serve` process's allowlisted private
-message assistant. Their semantics, privacy behavior, photo support, text-first response policy,
-and local media-library contract are documented in [messaging.md](messaging.md). The separate
-`VOICE_AGENT_VISION_MODELS` and `VOICE_AGENT_VISION_PROVIDERS` settings must select an
-image-capable Ajil provider/model; they are intentionally independent from normal text chat.
+## Validation and safe inspection
+
+```bash
+agentctl config validate
+agentctl config dump
+curl --noproxy '*' http://127.0.0.1:18090/config/redacted
+docker compose --profile agent config --quiet
+```
+
+Use only redacted output in support material. Compose-rendered configuration may contain expanded
+secrets from `.env`; do not publish it.

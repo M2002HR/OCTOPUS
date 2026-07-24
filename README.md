@@ -1,130 +1,195 @@
-# Telegram Voice Agent
+# OCTOPUS — Telegram Codex Agent
 
-## Telegram Codex platform
+OCTOPUS is a persistent personal AI control plane for an owner-operated development machine. The
+owner works through Telegram; OCTOPUS selects the right workspace and persistent Codex session,
+queues/recover jobs, streams safe progress, invokes Codex App Server as the primary execution
+brain, uses Ajil for orchestration/STT/provider routing, returns files/screenshots, and preserves a
+validated Telethon private-call/message subsystem.
 
-The repository now also contains `src/telegram_codex_agent`: a persistent Bot
-API agent that uses PostgreSQL, Redis Streams, Ajil, and the local Codex App
-Server. It is deliberately separate from the proven private-call service
-below, so Bot API work cannot disrupt Telegram voice calls.
+The configured default model is `gpt-5.6-terra`, default reasoning is `high`, and the control/voice
+defaults are English.
 
-```bash
-docker compose --profile agent up -d
-curl --noproxy '*' http://127.0.0.1:18090/ready
+## What it does
+
+- Codex CLI-style Telegram control center with inline and persistent keyboards.
+- Workspace discovery beneath an explicit trusted root, normally `~/Code`.
+- Persistent `/new` and `/resume` Codex App Server threads per user/project.
+- Durable PostgreSQL jobs/events with Redis Streams, leases, heartbeats, cancellation, and restart
+  recovery.
+- Model, reasoning, Fast service tier, permission, language, live-log, and completion-call settings.
+- `/status`, selected-session token usage, `/usage` authenticated weekly quota, `/history`, and
+  paginated logs.
+- Public Codex commentary/tool progress at `info`/`debug`; private reasoning remains private.
+- Text, voice note, image, document, video metadata, reply context, and validated artifact delivery.
+- Codex-driven project browser/Chrome Lab checks with screenshots returned to Telegram.
+- Scoped persistent conversation/user/project/outcome memory.
+- Ajil direct chat, STT, vision/provider routing, and safe terminal-status wording.
+- Primary Telethon account for inbound/outbound private calls and allowlisted private messages.
+- Optional completion call: after any terminal Codex outcome, call the opted-in Bot user, speak
+  Ajil's English status exactly three times, then hang up.
+- Structured health, audit, privacy boundaries, real two-session test harnesses, and Docker
+  restart policy.
+
+## Bot versus Telethon
+
+| Interface | Use |
+| --- | --- |
+| Telegram Bot API | Normal user interface: projects, Codex sessions/tasks, settings, logs, history, memory, files |
+| Primary Telethon session | Private calls, voice conversation, compatibility private messages, completion calls |
+| Second Telethon session | Approved real end-to-end testing only |
+
+The Bot does not replace Telethon because Bot API cannot place private account calls. The worker
+never opens the primary Telethon session; one persistent `voice-agent` process owns it exclusively.
+
+## Architecture
+
+```text
+Telegram Bot
+  -> PostgreSQL durable state
+  -> Redis job Stream
+  -> worker/orchestrator
+       +-> Codex App Server
+       +-> Ajil Unified AI Gateway
+       +-> trusted workspace/browser/tools
+  -> Telegram results, logs, and artifacts
+
+terminal Codex job
+  -> Ajil safe status
+  -> Redis completion-call Stream
+  -> primary Telethon voice-agent
+  -> status x3
+  -> automatic hangup
+
+incoming Telethon call
+  -> PyTgCalls PCM/VAD
+  -> Ajil STT/chat
+  -> Edge TTS
+  -> caller
 ```
 
-Choose an explicit project with `/projects` then `/project <slug>` before a
-code task. Detailed operations are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
-
-The Bot control center mirrors the core Codex CLI workflow:
-
-- `/new` creates a fresh Codex conversation in the selected workspace.
-- `/resume` lists saved threads and resumes the selected App Server thread.
-- `/status`, `/permissions`, `/model`, and `/reasoning` expose the active execution context.
-- `/fast`, `/fast on`, `/fast off`, and `/fast status` control the catalog-backed
-  Codex Fast service tier for future jobs; the same control is available in Settings.
-- `/status` includes the selected thread's live state, persisted token/context usage,
-  and the current Codex account quota.
-- `/history` shows the active session's prompts, results, and paginated durable job logs.
-- `/usage` reads the authenticated Codex account's weekly limit, remaining
-  percentage, and reset time. It is independent of the selected session.
-- `/language` changes voice transcription and AI response language while keeping the control UI in English.
-- `/logs` controls live `error`, `info`, `debug`, or `off` progress; `/logs <job-id>` shows the durable event history.
-- `/diff` and `/review` run read-only Codex inspections.
-- `/browser` runs the workspace's Chrome Lab/browser workflow and returns screenshots or reports to Telegram.
-
-The persistent keyboard keeps workspaces, sessions, browser tools, jobs, logs,
-review, settings, and cancellation one tap away. Telegram's slash-command menu
-is registered automatically when the Bot starts. With a workspace selected,
-Codex is the primary execution brain and Ajil remains the orchestration/direct
-conversation layer.
-
-At `info` or `debug`, Telegram receives Codex's public intermediate
-`agentMessage` commentary as well as lifecycle and tool summaries. Private
-reasoning items and raw credentials are never forwarded.
-
-The `/resume` picker distinguishes the selected thread from execution state:
-`RUNNING` means a job is in flight; `IDLE · last completed`, `IDLE · last
-failed`, or `IDLE · no tasks` means the thread has no active work. Every row
-also links directly to that thread's history.
-
-Telegram Voice Agent is a modular, auditable assistant for one-to-one Telegram calls. It
-uses the existing Telethon string session, PyTgCalls/NTgCalls for private-call media, Ajil
-Unified AI Gateway for speech-to-text and conversation, and Edge TTS for response speech.
-
-The project is deliberately safe by default:
-
-- No outbound call is automatic.
-- A call is allowed only after an explicit command and numeric peer allowlist check.
-- The assistant introduces itself as automated by default.
-- Secrets are read only from the root `.env`, are never committed, and are redacted from
-  structured event payloads.
+PostgreSQL is the control-plane source of truth. Redis provides delivery, live events, and bounded
+caches. `modules/ajil_uag` is a pinned recursive submodule.
 
 ## Quick start
 
+Prerequisites: Linux, Docker Compose v2, FFmpeg, Python 3.12 for native development, an
+authenticated Codex runtime, Telegram Bot/Telethon credentials, Ajil provider credentials, and
+approved allowlists.
+
 ```bash
-python3 -m venv .venv
+git submodule update --init --recursive
+cp .env.example .env
+chmod 600 .env
+# Fill secrets and host-specific values in .env.
+# Set telegram.allowed_user_ids/chat_ids in config/agent.yaml.
+
+docker compose --profile agent config --quiet
+docker compose --profile agent build
+docker compose --profile agent up -d
+docker compose --profile agent ps
+
+curl --noproxy '*' -fsS http://127.0.0.1:18090/ready
+curl --noproxy '*' -fsS http://127.0.0.1:8080/health
+```
+
+`config/agent.yaml` is the only non-secret policy file; root `.env` is the only secret/machine
+environment file.
+
+## First Telegram workflow
+
+1. Send `/start` to the Bot.
+2. Open `/projects` and choose an approved workspace.
+3. Send `/new` or select `/resume`.
+4. Review `/status`, `/model`, `/reasoning`, `/fast status`, and `/permissions`.
+5. Send a natural task.
+6. Follow public Codex commentary.
+7. Inspect `/history`, `/jobs`, or `/logs JOB_ID`.
+8. Use `/browser screenshot` when visual evidence is required.
+
+Completion calls are off per user until `/completion_call on`. They also require global policy and
+the Bot user's numeric ID in `VOICE_AGENT_ALLOWED_PEER_IDS`; the preference applies to newly
+created Codex jobs.
+
+## Important commands
+
+| Area | Commands |
+| --- | --- |
+| Navigation | `/start`, `/projects`, `/project SLUG`, `/new`, `/resume` |
+| State | `/status`, `/usage`, `/history`, `/jobs`, `/job JOB_ID`, `/logs` |
+| Control | `/stop JOB_ID`, `/permissions`, `/model`, `/reasoning`, `/fast` |
+| Settings | `/config`, `/language`, `/completion_call` |
+| Inspection | `/diff`, `/review`, `/browser` |
+| Memory | `/remember`, `/memory`, `/forget` |
+
+See [Telegram commands](docs/TELEGRAM_COMMANDS.md) for exact behavior.
+
+## Voice and media
+
+The persistent service accepts only startup-resolved usernames whose numeric IDs are allowlisted.
+It speaks the English introduction “Hello, yes?”, captures complete utterances using configurable
+VAD, performs Ajil STT/chat, and replies through Edge TTS.
+
+Telegram VoIP media is independent from Telethon signaling. On this deployment, UDP is captured in
+the voice namespace and transported through GOST → SSH → required HTTP CONNECT proxy. A successful
+MTProto connection alone does not prove call media.
+
+## Development and verification
+
+```bash
+python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-python scripts/bootstrap_env.py  # creates .env once; never prints secret values
+
+RUFF_CACHE_DIR=/tmp/octopus-ruff-cache .venv/bin/ruff check src tests tests_agent scripts
+PYTHONPYCACHEPREFIX=/tmp/octopus-pycache \
+  .venv/bin/python -m compileall -q src scripts tests tests_agent
+.venv/bin/mypy src
 .venv/bin/pytest -q
-
-# Start Ajil from the root configuration.
-docker compose up -d --wait uag-gateway
-
-# Verify the complete STT -> AI -> TTS pipeline without a call.
-UAG_BASE_URL=http://127.0.0.1:18081 \
-  .venv/bin/telegram-voice-agent process-file runtime/verification/edge-smoke.ogg --language en
+docker compose --profile agent config --quiet
+git diff --check
 ```
 
-To run the persistent inbound assistant, set `VOICE_AGENT_INBOUND_ENABLED=true`, set
-`VOICE_AGENT_INBOUND_USERNAME`, and ensure its resolved numeric ID is in
-`VOICE_AGENT_ALLOWED_PEER_IDS`. The username is resolved once at startup; every other caller is
-rejected.
+External Ajil, Codex, Telegram, Playwright, two-account call/message, and completion-call tests are
+opt-in and must use approved identities. Never claim an integration passed without recorded
+content-safe evidence.
 
-```bash
-docker compose --profile agent up -d voice-agent
-docker compose logs -f voice-agent
-```
-
-## UDP media overlay
-
-This host blocks direct outbound UDP, while Telegram calls require it for media. The private
-overlay captures the voice-agent namespace's UDP and carries it through an SSH connection. That
-SSH connection uses the required HTTP CONNECT proxy on port 3128.
-
-```bash
-python3 scripts/provision_media_relay.py
-docker compose --profile agent up -d --build
-```
-
-The remote relay binds only to loopback; no public relay port is opened. See
-[docs/media-overlay.md](docs/media-overlay.md) for topology, security, configuration, and the
-STUN preflight procedure.
-
-## Private messages
-
-The persistent service also handles text, voice notes, and photos from the one configured user.
-Replies are text by default, with explicit `/voice` and `/text` overrides. It can send only
-approved existing images/videos from a local manifest; it never generates media. See
-[docs/messaging.md](docs/messaging.md).
-
-Read [docs/README.md](docs/README.md) before running a live call. It contains the architecture,
-configuration reference, deployment guide, testing workflow, operational runbook, and known
-Telegram VoIP networking constraints.
-
-## Project layout
+## Repository layout
 
 | Path | Purpose |
 | --- | --- |
-| `src/voice_agent/` | Domain, application orchestration, adapters, VoIP engine, CLI |
-| `vendor/Ajil_Unified_AI_Gateway/` | Pinned Ajil submodule, including its nested modules |
-| `tests/` | Fast isolated unit and adapter-contract tests |
-| `docs/` | Complete operator and developer documentation |
-| `runtime/` | Ignored local database, JSONL events, temporary WAV turns, and generated Ogg files |
-| `.env` | Sole runtime configuration source; local only |
+| `src/telegram_codex_agent/` | Bot/API, jobs, worker, Codex/Ajil integration, memory, projects |
+| `src/voice_agent/` | Primary Telethon calls/messages, STT/TTS, VAD, audit, completion consumer |
+| `modules/ajil_uag/` | Pinned recursive Ajil Unified AI Gateway submodule |
+| `config/agent.yaml` | Checked-in non-secret policy |
+| `.env.example` | Complete root environment-name contract |
+| `alembic/` | PostgreSQL migrations |
+| `scripts/` | Bootstrap, doctor, media relay, systemd, and approved live tests |
+| `tests/`, `tests_agent/` | Voice and control-plane test suites |
+| `generated/codex/` | Installed App Server protocol schemas |
+| `docs/` | Architecture, decisions, deployment, operations, commands, testing, handoff |
+| `runtime/` | Ignored voice audit/temp/live-test media |
+| `data/artifacts/` | Managed control-plane artifacts |
 
-## Verification status
+## Security and privacy
 
-The local suite runs Ruff, strict mypy, and pytest. The deployment smoke test exercises real
-Edge TTS, Ajil STT, Ajil chat, and Ogg/Opus output. A successful media call additionally needs
-exclusive ownership of the Telethon authorization and outbound access to Telegram's call
-reflectors; see [VoIP troubleshooting](docs/troubleshooting.md#telegram-voip-handshake-and-media).
+Development full access is intentional. It is suitable only for one trusted owner. Numeric
+allowlists, trusted workspace roots, path containment, redacted events, and cleanup reduce
+accidental risk but do not create a multi-tenant sandbox.
+
+Do not commit `.env`, Telegram sessions, Bot/API/provider tokens, Codex auth, proxy/relay
+credentials, runtime transcripts, screenshots with secrets, or live audio. Voice JSONL excludes
+content; optional SQLite transcript tables and PostgreSQL messages/jobs remain sensitive.
+
+## Documentation
+
+Start with [the documentation index](docs/README.md), then read:
+
+- [System architecture](docs/ARCHITECTURE.md)
+- [Configuration](docs/configuration.md)
+- [Platform deployment](docs/DEPLOYMENT.md)
+- [Operations runbook](docs/RUNBOOK.md)
+- [Completion calls](docs/completion-calls.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Maintainer handoff](docs/HANDOFF.md)
+
+`COMPLETE_CODEX_IMPLEMENTATION_PROMPT.md` is retained as the historical product contract; current
+operating documentation and code are authoritative.
