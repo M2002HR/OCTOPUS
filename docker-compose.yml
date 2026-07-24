@@ -171,17 +171,25 @@ services:
     profiles: ["agent"]
     entrypoint: []
     working_dir: /workspace/octopus
+    network_mode: host
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agent_dev_password}@postgres:5432/${POSTGRES_DB:-telegram_codex_agent}
-      REDIS_URL: redis://redis:6379/1
-      AJIL_BASE_URL: http://ajil_gateway:8080
+      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agent_dev_password}@127.0.0.1:${POSTGRES_PORT:-15432}/${POSTGRES_DB:-telegram_codex_agent}
+      REDIS_URL: redis://127.0.0.1:${REDIS_PORT:-16379}/1
+      AJIL_BASE_URL: http://127.0.0.1:${AJIL_PORT:-8080}
       PROJECT_OCTOPUS_ROOT: /workspace/octopus
       CODEX_HOME: /codex-home
       CODEX_BINARY: /host-codex/bin/codex
       PATH: /host-codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       PYTHONPATH: /workspace/octopus/src
+      TELEGRAM_BOT_PROXY_URL: ${TELEGRAM_BOT_PROXY_URL:-http://127.0.0.1:3128}
+      # Codex's App Server makes authenticated outbound requests itself.  It
+      # therefore needs the host-reachable CONNECT proxy independently of the
+      # Bot API session above.
+      HTTP_PROXY: ${CODEX_HTTP_PROXY_URL:-http://127.0.0.1:3128}
+      HTTPS_PROXY: ${CODEX_HTTP_PROXY_URL:-http://127.0.0.1:3128}
+      NO_PROXY: 127.0.0.1,localhost
     volumes:
       - .:/workspace/octopus
       - ${CODEX_HOME_HOST:-/home/mhr/.codex}:/codex-home
@@ -202,17 +210,19 @@ services:
     profiles: ["agent"]
     entrypoint: []
     working_dir: /workspace/octopus
+    network_mode: host
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agent_dev_password}@postgres:5432/${POSTGRES_DB:-telegram_codex_agent}
-      REDIS_URL: redis://redis:6379/1
-      AJIL_BASE_URL: http://ajil_gateway:8080
+      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agent_dev_password}@127.0.0.1:${POSTGRES_PORT:-15432}/${POSTGRES_DB:-telegram_codex_agent}
+      REDIS_URL: redis://127.0.0.1:${REDIS_PORT:-16379}/1
+      AJIL_BASE_URL: http://127.0.0.1:${AJIL_PORT:-8080}
       PROJECT_OCTOPUS_ROOT: /workspace/octopus
       CODEX_HOME: /codex-home
       CODEX_BINARY: /host-codex/bin/codex
       PATH: /host-codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       PYTHONPATH: /workspace/octopus/src
+      TELEGRAM_BOT_PROXY_URL: ${TELEGRAM_BOT_PROXY_URL:-http://127.0.0.1:3128}
     volumes:
       - .:/workspace/octopus
       - ${CODEX_HOME_HOST:-/home/mhr/.codex}:/codex-home

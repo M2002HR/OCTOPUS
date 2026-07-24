@@ -51,7 +51,24 @@ class JobService:
             message = Message(conversation_id=conversation.id, role="user", content_type="text", text=text)
             session.add(message)
             await session.flush()
-            job = Job(conversation_id=conversation.id, project_id=conversation.project_id, request_message_id=message.id, intent=IntentType.UNKNOWN.value, objective=text, state=JobState.QUEUED.value)
+            job = Job(
+                conversation_id=conversation.id,
+                project_id=conversation.project_id,
+                request_message_id=message.id,
+                intent=IntentType.UNKNOWN.value,
+                objective=text,
+                state=JobState.QUEUED.value,
+                # Snapshot user-controlled execution preferences so a change
+                # made later cannot alter work already in the queue.
+                metadata_json={
+                    "codex_model": str(user.preferences_json.get("codex_model", "")),
+                    "codex_reasoning_effort": str(
+                        user.preferences_json.get("codex_reasoning_effort", "")
+                    ),
+                    "response_language": str(user.preferences_json.get("response_language", "")),
+                    "stream_progress": bool(user.preferences_json.get("stream_progress", True)),
+                },
+            )
             session.add(job)
             await session.flush()
             session.add(JobEventRow(job_id=job.id, sequence=1, event_type="job.received", level="info", message="job persisted"))
@@ -79,6 +96,28 @@ class JobService:
             )
             return (user, conversation) if conversation is not None else None
 
+    async def set_user_preference(self, telegram_user_id: int, key: str, value: object) -> bool:
+        async with self.sessions() as session:
+            user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
+            if user is None:
+                return False
+            user.preferences_json = {**user.preferences_json, key: value}
+            await session.commit()
+            return True
+
+    async def recent_jobs(self, telegram_user_id: int, telegram_chat_id: int, limit: int = 10) -> list[Job]:
+        async with self.sessions() as session:
+            rows = await session.scalars(
+                select(Job)
+                .join(Conversation, Job.conversation_id == Conversation.id)
+                .join(User, Conversation.user_id == User.id)
+                .join(Chat, Conversation.chat_id == Chat.id)
+                .where(User.telegram_user_id == telegram_user_id, Chat.telegram_chat_id == telegram_chat_id)
+                .order_by(Job.created_at.desc())
+                .limit(limit)
+            )
+            return list(rows)
+
     async def select_project(self, telegram_user_id: int, telegram_chat_id: int, slug: str) -> bool:
         async with self.sessions() as session:
             user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
@@ -102,6 +141,23 @@ class JobService:
         async with self.sessions() as session:
             return await session.get(Job, job_id)
 
+    async def get_for_context(
+        self, telegram_user_id: int, telegram_chat_id: int, job_id: str
+    ) -> Job | None:
+        """Return a job only when it belongs to the requesting Telegram context."""
+        async with self.sessions() as session:
+            return await session.scalar(
+                select(Job)
+                .join(Conversation, Job.conversation_id == Conversation.id)
+                .join(User, Conversation.user_id == User.id)
+                .join(Chat, Conversation.chat_id == Chat.id)
+                .where(
+                    Job.id == job_id,
+                    User.telegram_user_id == telegram_user_id,
+                    Chat.telegram_chat_id == telegram_chat_id,
+                )
+            )
+
     async def events(self, job_id: str) -> list[JobEventRow]:
         async with self.sessions() as session:
             rows = await session.scalars(
@@ -120,6 +176,13 @@ class JobService:
             session.add(JobEventRow(job_id=job.id, sequence=await self._next_sequence(session, job.id), event_type="job.cancel_requested", level="info", message="cancellation requested"))
             await session.commit()
             return True
+
+    async def cancel_for_context(
+        self, telegram_user_id: int, telegram_chat_id: int, job_id: str
+    ) -> bool:
+        if await self.get_for_context(telegram_user_id, telegram_chat_id, job_id) is None:
+            return False
+        return await self.cancel(job_id)
 
     @staticmethod
     async def _next_sequence(session: AsyncSession, job_id: str) -> int:

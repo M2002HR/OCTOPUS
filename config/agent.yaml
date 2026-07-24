@@ -17,6 +17,7 @@ telegram:
   default_parse_mode: HTML
   progress_edit_interval_seconds: 3
   max_message_length: 3800
+  bot_proxy_url_env: TELEGRAM_BOT_PROXY_URL
 database:
   url: ${DATABASE_URL:-postgresql+asyncpg://agent:agent_dev_password@127.0.0.1:15432/telegram_codex_agent}
   echo: false
@@ -37,7 +38,7 @@ ajil:
     reject_local_fallback: true
 codex:
   binary: ${CODEX_BINARY:-codex}
-  model: ${CODEX_MODEL:-gpt-5.5}
+  model: ${CODEX_MODEL:-gpt-5.6-terra}
   reasoning_effort: ${CODEX_REASONING_EFFORT:-high}
   approval_policy: ${CODEX_APPROVAL_POLICY:-never}
   sandbox_mode: ${CODEX_SANDBOX_MODE:-danger-full-access}

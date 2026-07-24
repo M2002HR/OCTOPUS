@@ -53,10 +53,15 @@ class TelegramConfig(BaseModel):
     default_parse_mode: Literal["HTML", "MarkdownV2"] = "HTML"
     progress_edit_interval_seconds: float = 3.0
     max_message_length: int = 3800
+    bot_proxy_url_env: str = "TELEGRAM_BOT_PROXY_URL"
 
     @property
     def bot_token(self) -> str:
         return os.getenv(self.bot_token_env, "").strip()
+
+    @property
+    def bot_proxy_url(self) -> str:
+        return os.getenv(self.bot_proxy_url_env, "").strip()
 
 
 class DatabaseConfig(BaseModel):
@@ -92,7 +97,7 @@ class AjilConfig(BaseModel):
 
 class CodexConfig(BaseModel):
     binary: str = "codex"
-    model: str = "gpt-5.5"
+    model: str = "gpt-5.6-terra"
     reasoning_effort: str = "high"
     approval_policy: Literal["never", "on-request", "untrusted"] = "never"
     sandbox_mode: Literal["read-only", "workspace-write", "danger-full-access"] = (

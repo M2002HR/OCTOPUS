@@ -30,7 +30,7 @@ async def run_bot() -> None:
         jobs = job_service(settings)
         await ProjectRegistry(create_session_factory(create_engine(settings.database)), settings.projects).sync()
 
-        async def reply(message: object, jobs=jobs) -> str:
+        async def reply(message: object, jobs=jobs, settings=settings) -> str:
             text = str(getattr(message, "text", "") or getattr(message, "caption", "")).strip()
             from_user = getattr(message, "from_user", None)
             chat = getattr(message, "chat", None)
@@ -42,6 +42,70 @@ async def run_bot() -> None:
             if text.startswith("/project "):
                 slug = text.removeprefix("/project ").strip()
                 return "پروژه انتخاب شد." if await jobs.select_project(from_user.id, chat.id, slug) else "پروژه پیدا نشد؛ /projects را ببینید."
+            if text == "/status":
+                return "سامانه فعال است. برای مشاهدهٔ کارها /jobs و برای پروژه‌ها /projects را بزنید."
+            if text == "/jobs":
+                rows = await jobs.recent_jobs(from_user.id, chat.id)
+                return "\n".join(f"• {row.id}: {row.state}" for row in rows) or "کاری ثبت نشده است."
+            if text.startswith("/job "):
+                job_id = text.removeprefix("/job ").strip()
+                job = await jobs.get_for_context(from_user.id, chat.id, job_id)
+                return f"{job.id}: {job.state}\n{job.result_summary or job.error_message}" if job else "کار پیدا نشد."
+            if text.startswith("/logs "):
+                job_id = text.removeprefix("/logs ").strip()
+                job = await jobs.get_for_context(from_user.id, chat.id, job_id)
+                if job is None:
+                    return "کار پیدا نشد."
+                events = await jobs.events(job_id)
+                return "\n".join(
+                    f"{row.sequence}. {row.event_type}: {row.message}"
+                    for row in events[-20:]
+                ) or "رخدادی ثبت نشده است."
+            if text.startswith("/stop "):
+                job_id = text.removeprefix("/stop ").strip()
+                return "درخواست لغو ثبت شد." if await jobs.cancel_for_context(from_user.id, chat.id, job_id) else "کار قابل لغو نیست یا پیدا نشد."
+            if text == "/codex":
+                context = await jobs.active_context(from_user.id, chat.id)
+                preferences = context[0].preferences_json if context else {}
+                selected = str(preferences.get("codex_model", ""))
+                effort = str(preferences.get("codex_reasoning_effort", ""))
+                return f"مدل Codex: {selected or settings.codex.model}\nسطح استدلال: {effort or settings.codex.reasoning_effort}\nبرای تغییر: /codex model <model> یا /config effort <level>"
+            if text.startswith("/codex model "):
+                model = text.removeprefix("/codex model ").strip()
+                if not model or not model.startswith("gpt-"):
+                    return "نام مدل معتبر نیست."
+                return "مدل پیش‌فرض شما ذخیره شد." if await jobs.set_user_preference(from_user.id, "codex_model", model) else "ابتدا یک پیام عادی بفرستید تا حساب ثبت شود."
+            if text == "/config":
+                context = await jobs.active_context(from_user.id, chat.id)
+                preferences = context[0].preferences_json if context else {}
+                return (
+                    "تنظیمات اجرای شما:\n"
+                    f"• مدل Codex: {preferences.get('codex_model') or settings.codex.model}\n"
+                    f"• سطح استدلال: {preferences.get('codex_reasoning_effort') or settings.codex.reasoning_effort}\n"
+                    f"• زبان پاسخ: {preferences.get('response_language') or settings.app.language}\n"
+                    f"• رخدادهای زنده: {'روشن' if preferences.get('stream_progress', True) else 'خاموش'}\n\n"
+                    "تغییرها: /config model <gpt-model> | /config effort <low|medium|high|xhigh|max|ultra> | /config language <fa|en> | /config progress <on|off>"
+                )
+            if text.startswith("/config model "):
+                model = text.removeprefix("/config model ").strip()
+                if not model.startswith("gpt-"):
+                    return "نام مدل معتبر نیست."
+                return "مدل ذخیره شد." if await jobs.set_user_preference(from_user.id, "codex_model", model) else "ابتدا یک پیام عادی بفرستید تا حساب ثبت شود."
+            if text.startswith("/config effort "):
+                effort = text.removeprefix("/config effort ").strip().casefold()
+                if effort not in {"low", "medium", "high", "xhigh", "max", "ultra"}:
+                    return "سطح استدلال معتبر نیست."
+                return "سطح استدلال ذخیره شد." if await jobs.set_user_preference(from_user.id, "codex_reasoning_effort", effort) else "ابتدا یک پیام عادی بفرستید تا حساب ثبت شود."
+            if text.startswith("/config language "):
+                language = text.removeprefix("/config language ").strip().casefold()
+                if language not in {"fa", "en"}:
+                    return "زبان فقط fa یا en است."
+                return "زبان پاسخ ذخیره شد." if await jobs.set_user_preference(from_user.id, "response_language", language) else "ابتدا یک پیام عادی بفرستید تا حساب ثبت شود."
+            if text.startswith("/config progress "):
+                value = text.removeprefix("/config progress ").strip().casefold()
+                if value not in {"on", "off"}:
+                    return "مقدار فقط on یا off است."
+                return "رخدادهای زنده ذخیره شد." if await jobs.set_user_preference(from_user.id, "stream_progress", value == "on") else "ابتدا یک پیام عادی بفرستید تا حساب ثبت شود."
             context = await jobs.active_context(from_user.id, chat.id)
             memory = MemoryService(jobs.sessions)
             if text.startswith("/remember "):
