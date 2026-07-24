@@ -61,6 +61,10 @@ class Worker:
         self.redis: Redis = from_url(settings.redis.url, decode_responses=True)
         self.queue = RedisStreamJobQueue(self.redis, settings.redis.stream, settings.redis.consumer_group)
         self.stop_event = asyncio.Event()
+        # App Server notifications and the lease heartbeat arrive on separate
+        # asyncio tasks. Serialize their PostgreSQL writes so event-sequence
+        # inserts and Job row updates cannot deadlock each other.
+        self._db_write_lock = asyncio.Lock()
 
     async def run(self) -> None:
         await ProjectRegistry(self.sessions, self.settings.projects, self.settings.workspace).sync()
@@ -244,6 +248,8 @@ class Worker:
             if method == "turn/started":
                 turn = params.get("turn") or {}
                 await self._record_codex_ids(job_id, str(params.get("threadId", "")), str(turn.get("id", "")))
+            if method == "thread/tokenUsage/updated":
+                await self._record_token_usage(job_id, params)
             if method in {"turn/completed", "error"}:
                 await self._event(job_id, f"codex.{method.replace('/', '.')}", "Codex event received")
             agent_message = self._codex_agent_message(method, params)
@@ -587,61 +593,109 @@ class Worker:
             raise _Cancelled()
 
     async def _heartbeat(self, job_id: str) -> None:
-        async with self.sessions() as session:
-            repository = JobRepository(session)
-            if await repository.heartbeat(job_id, self.worker_id, self.settings.jobs.lease_seconds):
-                await self._event_in_session(session, job_id, "job.heartbeat", "worker lease renewed")
-                await session.commit()
+        async with self._db_write_lock:
+            async with self.sessions() as session:
+                repository = JobRepository(session)
+                if await repository.heartbeat(job_id, self.worker_id, self.settings.jobs.lease_seconds):
+                    await self._event_in_session(session, job_id, "job.heartbeat", "worker lease renewed")
+                    await session.commit()
 
     async def _record_codex_thread(self, job_id: str, thread: CodexThreadHandle) -> None:
-        async with self.sessions() as session:
-            job = await session.get(Job, job_id, with_for_update=True)
-            if job is None:
-                return
-            job.codex_thread_id = thread.id
-            existing = await session.scalar(
-                select(CodexThread).where(CodexThread.codex_thread_id == thread.id)
-            )
-            if existing is None:
-                conversation = await session.get(Conversation, job.conversation_id)
-                if conversation is not None:
-                    session.add(
-                        CodexThread(
-                            user_id=conversation.user_id,
-                            conversation_id=job.conversation_id,
-                            project_id=job.project_id,
-                            codex_thread_id=thread.id,
-                            cwd=thread.cwd,
-                            model=thread.model,
-                            approval_policy=self.settings.codex.approval_policy,
-                            sandbox_mode=self.settings.codex.sandbox_mode,
+        async with self._db_write_lock:
+            async with self.sessions() as session:
+                job = await session.get(Job, job_id, with_for_update=True)
+                if job is None:
+                    return
+                job.codex_thread_id = thread.id
+                existing = await session.scalar(
+                    select(CodexThread).where(CodexThread.codex_thread_id == thread.id)
+                )
+                if existing is None:
+                    conversation = await session.get(Conversation, job.conversation_id)
+                    if conversation is not None:
+                        session.add(
+                            CodexThread(
+                                user_id=conversation.user_id,
+                                conversation_id=job.conversation_id,
+                                project_id=job.project_id,
+                                codex_thread_id=thread.id,
+                                cwd=thread.cwd,
+                                model=thread.model,
+                                approval_policy=self.settings.codex.approval_policy,
+                                sandbox_mode=self.settings.codex.sandbox_mode,
+                            )
                         )
+                else:
+                    existing.model = thread.model
+                    existing.approval_policy = str(
+                        job.metadata_json.get("approval_policy")
+                        or self.settings.codex.approval_policy
                     )
-            else:
-                existing.model = thread.model
-                existing.approval_policy = str(
-                    job.metadata_json.get("approval_policy")
-                    or self.settings.codex.approval_policy
-                )
-                existing.sandbox_mode = str(
-                    job.metadata_json.get("sandbox_mode")
-                    or self.settings.codex.sandbox_mode
-                )
-            await self._event_in_session(session, job_id, "codex.thread.started", "Codex thread started", {"thread_id": thread.id})
-            await session.commit()
+                    existing.sandbox_mode = str(
+                        job.metadata_json.get("sandbox_mode")
+                        or self.settings.codex.sandbox_mode
+                    )
+                await self._event_in_session(session, job_id, "codex.thread.started", "Codex thread started", {"thread_id": thread.id})
+                await session.commit()
         await self._deliver_progress(job_id, "⌛ Codex started a workspace session. I will send the verified result here.")
 
     async def _record_codex_ids(self, job_id: str, thread_id: str, turn_id: str) -> None:
         if not turn_id:
             return
-        async with self.sessions() as session:
-            job = await session.get(Job, job_id, with_for_update=True)
-            if job:
-                job.codex_thread_id = thread_id or job.codex_thread_id
-                job.codex_turn_id = turn_id
-                await self._event_in_session(session, job_id, "codex.turn.started", "Codex turn started", {"turn_id": turn_id})
-                await session.commit()
+        async with self._db_write_lock:
+            async with self.sessions() as session:
+                job = await session.get(Job, job_id, with_for_update=True)
+                if job:
+                    job.codex_thread_id = thread_id or job.codex_thread_id
+                    job.codex_turn_id = turn_id
+                    await self._event_in_session(session, job_id, "codex.turn.started", "Codex turn started", {"turn_id": turn_id})
+                    await session.commit()
         await self._deliver_progress(job_id, "🛠 Codex is working on the requested task now.")
+
+    async def _record_token_usage(
+        self,
+        job_id: str,
+        params: dict[str, Any],
+    ) -> None:
+        usage = self._normalize_token_usage(params.get("tokenUsage"))
+        if not usage:
+            return
+        async with self._db_write_lock:
+            async with self.sessions() as session:
+                job = await session.get(Job, job_id, with_for_update=True)
+                if job is None:
+                    return
+                previous = job.metadata_json.get("token_usage")
+                job.metadata_json = {**job.metadata_json, "token_usage": usage}
+                thread_id = str(params.get("threadId") or job.codex_thread_id or "")
+                thread = (
+                    await session.scalar(
+                        select(CodexThread).where(
+                            CodexThread.codex_thread_id == thread_id
+                        )
+                    )
+                    if thread_id
+                    else None
+                )
+                if thread is not None:
+                    thread.metadata_json = {
+                        **thread.metadata_json,
+                        "token_usage": usage,
+                    }
+                    thread.last_turn_id = str(
+                        params.get("turnId") or job.codex_turn_id or ""
+                    )
+                    thread.last_used_at = utcnow()
+                if previous != usage:
+                    total = usage.get("total", {})
+                    await self._event_in_session(
+                        session,
+                        job_id,
+                        "codex.token_usage.updated",
+                        f"Codex usage updated: {total.get('totalTokens', 0)} total tokens",
+                        {"token_usage": usage},
+                    )
+                await session.commit()
 
     async def _decide_approval(self, job_id: str, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Persist every unexpected privilege request before returning a safe denial.
@@ -657,26 +711,28 @@ class Worker:
         else:
             response = {"decision": "decline" if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"} else "cancel"}
             decision = response["decision"]
-        async with self.sessions() as session:
-            session.add(
-                ApprovalRecord(
-                    job_id=job_id,
-                    codex_request_id=str(params.get("approvalId") or params.get("itemId") or "unknown"),
-                    approval_type=method,
-                    request_json=params,
-                    decision=decision,
-                    scope="turn",
-                    auto_approved=False,
+        async with self._db_write_lock:
+            async with self.sessions() as session:
+                session.add(
+                    ApprovalRecord(
+                        job_id=job_id,
+                        codex_request_id=str(params.get("approvalId") or params.get("itemId") or "unknown"),
+                        approval_type=method,
+                        request_json=params,
+                        decision=decision,
+                        scope="turn",
+                        auto_approved=False,
+                    )
                 )
-            )
-            await self._event_in_session(session, job_id, "codex.approval.denied", "Codex approval request denied by project policy", {"method": method})
-            await session.commit()
+                await self._event_in_session(session, job_id, "codex.approval.denied", "Codex approval request denied by project policy", {"method": method})
+                await session.commit()
         return response
 
     async def _event(self, job_id: str, event_type: str, message: str, data: dict[str, object] | None = None) -> None:
-        async with self.sessions() as session:
-            await self._event_in_session(session, job_id, event_type, message, data)
-            await session.commit()
+        async with self._db_write_lock:
+            async with self.sessions() as session:
+                await self._event_in_session(session, job_id, event_type, message, data)
+                await session.commit()
 
     @staticmethod
     async def _event_in_session(session: AsyncSession, job_id: str, event_type: str, message: str, data: dict[str, object] | None = None) -> None:
@@ -745,6 +801,37 @@ class Worker:
         )
         text = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", text)
         return text
+
+    @staticmethod
+    def _normalize_token_usage(raw: object) -> dict[str, object]:
+        if not isinstance(raw, dict):
+            return {}
+
+        def integer(value: object) -> int:
+            try:
+                return max(0, int(value or 0))
+            except (TypeError, ValueError):
+                return 0
+
+        def breakdown(value: object) -> dict[str, int]:
+            source = value if isinstance(value, dict) else {}
+            return {
+                key: integer(source.get(key, 0))
+                for key in (
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "outputTokens",
+                    "reasoningOutputTokens",
+                    "totalTokens",
+                )
+            }
+
+        window = raw.get("modelContextWindow")
+        return {
+            "last": breakdown(raw.get("last")),
+            "total": breakdown(raw.get("total")),
+            "modelContextWindow": integer(window),
+        }
 
     @staticmethod
     def _plan(objective: str, intent: IntentType, has_project: bool) -> ExecutionPlan:
