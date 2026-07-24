@@ -62,13 +62,25 @@ class JobRepository:
 
     async def claim(self, job_id: str, worker_id: str, lease_seconds: int) -> bool:
         job = await self.session.get(Job, job_id, with_for_update=True)
-        if job is None or job.state not in {JobState.QUEUED.value, JobState.RECOVERING.value}:
+        terminal_states = {
+            JobState.COMPLETED.value,
+            JobState.FAILED.value,
+            JobState.CANCELLED.value,
+            JobState.INTERRUPTED.value,
+        }
+        if job is None or job.state in terminal_states:
             return False
         now = utcnow()
         lease = await self.session.scalar(
             select(WorkerLease).where(WorkerLease.job_id == job_id).with_for_update()
         )
         if lease and lease.expires_at > now and lease.worker_id != worker_id:
+            return False
+        if (
+            job.state not in {JobState.QUEUED.value, JobState.RECOVERING.value}
+            and lease is not None
+            and lease.expires_at > now
+        ):
             return False
         if lease is None:
             lease = WorkerLease(

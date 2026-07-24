@@ -26,4 +26,6 @@ Evidence is recorded here rather than inferred from design documents.
 - [x] Persistent lexical-scoped memory, user commands, retrieval metadata, and outcome recording
 - [x] Live E2E: Ajil direct chat, Codex read-only project task, and cancellation during a live Codex turn
 - [x] Compose API/worker/bot services, migrations, health checks, restart policy, runbook, and systemd templates
-- [ ] Recovery of stale Redis pending messages; browser, artifact, and Bot-media execution paths
+- [x] Codex CLI-style Telegram UX: persistent/inline keyboards, workspace discovery under `~/Code`, `/new`, real `thread/resume`, `/status`, `/permissions`, model/reasoning controls, and scoped job logs
+- [x] Live level-controlled Codex lifecycle/activity streaming and verified Telegram screenshot/artifact delivery
+- [x] Redis pending-message recovery coordinated with PostgreSQL leases, plus Codex-driven Chrome Lab/browser verification and artifact handoff
