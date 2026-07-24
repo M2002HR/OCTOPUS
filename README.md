@@ -15,6 +15,21 @@ curl --noproxy '*' http://127.0.0.1:18090/ready
 Choose an explicit project with `/projects` then `/project <slug>` before a
 code task. Detailed operations are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
+The Bot control center mirrors the core Codex CLI workflow:
+
+- `/new` creates a fresh Codex conversation in the selected workspace.
+- `/resume` lists saved threads and resumes the selected App Server thread.
+- `/status`, `/permissions`, `/model`, and `/reasoning` expose the active execution context.
+- `/logs` controls live `error`, `info`, `debug`, or `off` progress; `/logs <job-id>` shows the durable event history.
+- `/diff` and `/review` run read-only Codex inspections.
+- `/browser` runs the workspace's Chrome Lab/browser workflow and returns screenshots or reports to Telegram.
+
+The persistent keyboard keeps workspaces, sessions, browser tools, jobs, logs,
+review, settings, and cancellation one tap away. Telegram's slash-command menu
+is registered automatically when the Bot starts. With a workspace selected,
+Codex is the primary execution brain and Ajil remains the orchestration/direct
+conversation layer.
+
 Telegram Voice Agent is a modular, auditable assistant for one-to-one Telegram calls. It
 uses the existing Telethon string session, PyTgCalls/NTgCalls for private-call media, Ajil
 Unified AI Gateway for speech-to-text and conversation, and Edge TTS for response speech.

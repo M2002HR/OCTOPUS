@@ -2,19 +2,39 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from aiogram import Bot, Dispatcher, Router
+from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramNetworkError
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import (
+    BotCommand,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
 
 from telegram_codex_agent.core.config import Settings
 from telegram_codex_agent.telegram.formatting import as_html, split_telegram_text
 
 logger = logging.getLogger(__name__)
-InputHandler = Callable[[Message], Awaitable[str]]
+
+
+@dataclass(slots=True)
+class BotResponse:
+    text: str
+    inline_buttons: list[list[tuple[str, str]]] = field(default_factory=list)
+    show_main_keyboard: bool = False
+
+
+InputHandler = Callable[[Message, str | None, int | None], Awaitable[BotResponse | str]]
 
 
 class HttpProxyAiohttpSession(AiohttpSession):
@@ -82,6 +102,7 @@ class TelegramBotService:
         self.bot = (
             Bot(
                 settings.telegram.bot_token,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
                 session=HttpProxyAiohttpSession(settings.telegram.bot_proxy_url)
                 if settings.telegram.bot_proxy_url
                 else None,
@@ -103,27 +124,82 @@ class TelegramBotService:
         chat_allowed = not chat_ids or message.chat.id in chat_ids
         return user_allowed and chat_allowed
 
-    async def _reply(self, message: Message, text: str) -> None:
-        for chunk in split_telegram_text(as_html(text), self.settings.telegram.max_message_length):
-            await message.answer(chunk)
+    @staticmethod
+    def _main_keyboard() -> ReplyKeyboardMarkup:
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🏠 Home"), KeyboardButton(text="📊 Status")],
+                [KeyboardButton(text="📁 Projects"), KeyboardButton(text="💬 Sessions")],
+                [KeyboardButton(text="🌐 Browser"), KeyboardButton(text="📜 Logs")],
+                [KeyboardButton(text="🧾 Jobs"), KeyboardButton(text="🔍 Review")],
+                [KeyboardButton(text="⚙️ Settings"), KeyboardButton(text="🛑 Stop")],
+            ],
+            resize_keyboard=True,
+            is_persistent=True,
+            input_field_placeholder="Send a task to Codex…",
+        )
+
+    async def _reply(self, message: Message, response: BotResponse | str) -> None:
+        payload = response if isinstance(response, BotResponse) else BotResponse(str(response))
+        chunks = split_telegram_text(as_html(payload.text), self.settings.telegram.max_message_length)
+        inline_markup = (
+            InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=label, callback_data=data) for label, data in row]
+                    for row in payload.inline_buttons
+                ]
+            )
+            if payload.inline_buttons
+            else None
+        )
+        for index, chunk in enumerate(chunks):
+            markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None
+            if index == len(chunks) - 1:
+                markup = inline_markup or (self._main_keyboard() if payload.show_main_keyboard else None)
+            await message.answer(chunk, reply_markup=markup)
+        if inline_markup is not None and payload.show_main_keyboard:
+            await message.answer("Quick controls are ready below.", reply_markup=self._main_keyboard())
+
+    async def _dispatch_input(
+        self, message: Message, command: str | None = None, actor_user_id: int | None = None
+    ) -> None:
+        try:
+            await self._reply(message, await self.handler(message, command, actor_user_id))
+        except Exception:
+            logger.exception("Telegram input handling failed")
+            await self._reply(message, "Internal error. The diagnostic details were recorded.")
 
     def _install_routes(self) -> None:
         @self.router.message(Command("start"))
         async def start(message: Message) -> None:
             if not self._allowed(message):
                 return
-            await self._reply(
-                message,
-                "سلام. من برای گفتگو، پروژه‌ها، کد، فایل، صوت و بررسی مرورگر آماده‌ام. /help را بزنید.",
-            )
+            await self._dispatch_input(message, "/home")
 
         @self.router.message(Command("help"))
         async def help_command(message: Message) -> None:
             if not self._allowed(message):
                 return
-            await self._reply(
+            await self._dispatch_input(message, "/help")
+
+        @self.router.callback_query()
+        async def handle_callback(callback: CallbackQuery) -> None:
+            message = callback.message
+            user_ids = self.settings.telegram.allowed_user_ids
+            chat_ids = self.settings.telegram.allowed_chat_ids
+            allowed = (
+                isinstance(message, Message)
+                and (not user_ids or callback.from_user.id in user_ids)
+                and (not chat_ids or message.chat.id in chat_ids)
+            )
+            if not allowed or not isinstance(message, Message):
+                await callback.answer("Not allowed", show_alert=True)
+                return
+            await callback.answer()
+            await self._dispatch_input(
                 message,
-                "دستورها: /status، /projects، /project <slug>، /jobs، /job <id>، /logs <id>، /stop <id>، /codex، /config، /memory، /remember <text> و /forget <id>",
+                callback.data or "/home",
+                actor_user_id=callback.from_user.id,
             )
 
         @self.router.message()
@@ -134,13 +210,31 @@ class TelegramBotService:
                     extra={"telegram_user_id": message.from_user.id if message.from_user else None},
                 )
                 return
-            try:
-                await self._reply(message, await self.handler(message))
-            except Exception:
-                logger.exception("Telegram input handling failed")
-                await self._reply(message, "خطای داخلی رخ داد؛ جزئیات برای بررسی ثبت شد.")
+            await self._dispatch_input(message)
+
+    @staticmethod
+    def _command_menu() -> list[BotCommand]:
+        return [
+            BotCommand(command="start", description="Open the Octopus control center"),
+            BotCommand(command="new", description="Start a fresh Codex session"),
+            BotCommand(command="resume", description="Resume a saved Codex session"),
+            BotCommand(command="status", description="Show the active Codex context"),
+            BotCommand(command="projects", description="Choose a workspace under Code"),
+            BotCommand(command="jobs", description="View recent and running jobs"),
+            BotCommand(command="logs", description="Configure live logs or inspect a job"),
+            BotCommand(command="permissions", description="Set Codex permission mode"),
+            BotCommand(command="model", description="Choose the Codex model"),
+            BotCommand(command="reasoning", description="Choose reasoning effort"),
+            BotCommand(command="browser", description="Browser checks and screenshots"),
+            BotCommand(command="diff", description="Inspect uncommitted changes"),
+            BotCommand(command="review", description="Review the working tree"),
+            BotCommand(command="config", description="Open all settings"),
+            BotCommand(command="memory", description="List saved agent memory"),
+            BotCommand(command="help", description="Show command help"),
+        ]
 
     async def run_polling(self) -> None:
         if self.bot is None:
             raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+        await self.bot.set_my_commands(self._command_menu())
         await self.dispatcher.start_polling(self.bot)
