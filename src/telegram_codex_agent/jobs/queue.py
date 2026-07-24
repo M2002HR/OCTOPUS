@@ -46,11 +46,10 @@ class RedisStreamJobQueue:
             )
             for _, messages in records:
                 for message_id, fields in messages:
-                    job_id = (
-                        fields[b"job_id"].decode()
-                        if isinstance(fields[b"job_id"], bytes)
-                        else fields[b"job_id"]
-                    )
+                    raw_job_id = fields.get("job_id", fields.get(b"job_id"))
+                    if raw_job_id is None:
+                        raise KeyError("job_id")
+                    job_id = raw_job_id.decode() if isinstance(raw_job_id, bytes) else raw_job_id
                     yield (
                         message_id.decode() if isinstance(message_id, bytes) else message_id,
                         str(job_id),

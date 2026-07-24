@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from telegram_codex_agent import __version__
 from telegram_codex_agent.core.config import Settings
+from telegram_codex_agent.jobs.service import JobService
 
 HealthCheck = Callable[[], Awaitable[dict[str, Any]]]
 
@@ -31,7 +32,17 @@ class CancelResponse(BaseModel):
     state: str
 
 
-def create_app(settings: Settings, registry: HealthRegistry | None = None) -> FastAPI:
+class JobRequest(BaseModel):
+    telegram_user_id: int
+    telegram_chat_id: int
+    text: str
+
+
+def create_app(
+    settings: Settings,
+    registry: HealthRegistry | None = None,
+    jobs: JobService | None = None,
+) -> FastAPI:
     app = FastAPI(
         title=settings.app.name,
         version=__version__,
@@ -62,11 +73,24 @@ def create_app(settings: Settings, registry: HealthRegistry | None = None) -> Fa
         return settings.projects
 
     @app.get("/jobs/{job_id}")
-    async def job(job_id: str) -> dict[str, str]:
-        raise HTTPException(status_code=404, detail=f"job {job_id} was not found")
+    async def job(job_id: str) -> dict[str, object]:
+        if jobs is None:
+            raise HTTPException(status_code=503, detail="job service is unavailable")
+        record = await jobs.get(job_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"job {job_id} was not found")
+        return {"id": record.id, "state": record.state, "objective": record.objective, "result": record.result_summary}
+
+    @app.post("/jobs")
+    async def create_job(request: JobRequest) -> dict[str, str]:
+        if jobs is None:
+            raise HTTPException(status_code=503, detail="job service is unavailable")
+        return {"job_id": await jobs.create_from_text(request.telegram_user_id, request.telegram_chat_id, request.text)}
 
     @app.post("/jobs/{job_id}/cancel", response_model=CancelResponse)
     async def cancel(job_id: str) -> CancelResponse:
+        if jobs is None or not await jobs.cancel(job_id):
+            raise HTTPException(status_code=404, detail=f"job {job_id} was not found or cannot be cancelled")
         return CancelResponse(job_id=job_id, state="cancel_requested")
 
     return app

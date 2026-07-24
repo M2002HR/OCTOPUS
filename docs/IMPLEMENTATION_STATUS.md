@@ -21,7 +21,8 @@ Evidence is recorded here rather than inferred from design documents.
 - [x] Ajil typed client with structured-output/fallback handling
 - [x] Telegram Bot API adapter and normalization primitives
 - [x] Job state machine and Redis/in-memory queue primitives
-- [ ] Persistent worker, recovery, and full orchestration
+- [x] Persistent ingress, Redis delivery, worker state/event persistence, and cancellation
+- [ ] Recovery of stale Redis pending messages and full Codex/tool orchestration
 - [ ] Codex App Server integration
 - [ ] Host tools and project registry
 - [ ] Memory, browser, artifacts, and voice notes
