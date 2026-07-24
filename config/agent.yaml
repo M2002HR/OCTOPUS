@@ -37,7 +37,7 @@ ajil:
     reject_local_fallback: true
 codex:
   binary: ${CODEX_BINARY:-codex}
-  model: ${CODEX_MODEL:-}
+  model: ${CODEX_MODEL:-gpt-5.5}
   reasoning_effort: ${CODEX_REASONING_EFFORT:-high}
   approval_policy: ${CODEX_APPROVAL_POLICY:-never}
   sandbox_mode: ${CODEX_SANDBOX_MODE:-danger-full-access}
@@ -69,4 +69,10 @@ memory:
   enabled: true
   summarize_after_messages: 30
   retrieval_limit: 8
-projects: []
+projects:
+  - slug: octopus
+    name: OCTOPUS
+    root_path: ${PROJECT_OCTOPUS_ROOT:-/home/mhr/Code/OCTOPUS}
+    description: Primary registered OCTOPUS workspace
+    test_commands: ["pytest -q"]
+    lint_commands: ["ruff check src tests tests_agent"]

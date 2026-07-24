@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 
 from redis.asyncio import from_url
@@ -12,16 +13,39 @@ from telegram_codex_agent.db.session import create_engine, create_session_factor
 from telegram_codex_agent.integrations.ajil import AjilClient
 from telegram_codex_agent.jobs.service import JobService
 from telegram_codex_agent.jobs.worker import Worker
+from telegram_codex_agent.projects import ProjectRegistry
 from telegram_codex_agent.telegram.bot import TelegramBotService
 
-
-async def _reply(_: object) -> str:
-    return "پیام دریافت شد. مسیر پردازش شغل در حال راه‌اندازی است."
+logger = logging.getLogger(__name__)
 
 
 async def run_bot() -> None:
-    service = TelegramBotService(load_settings(), _reply)
-    await service.run_polling()
+    while True:
+        settings = load_settings()
+        if not settings.telegram.bot_token:
+            logger.warning("Telegram bot token is absent; bot will retry after configuration reload")
+            await asyncio.sleep(30)
+            continue
+        jobs = job_service(settings)
+        await ProjectRegistry(create_session_factory(create_engine(settings.database)), settings.projects).sync()
+
+        async def reply(message: object, jobs=jobs) -> str:
+            text = str(getattr(message, "text", "") or getattr(message, "caption", "")).strip()
+            from_user = getattr(message, "from_user", None)
+            chat = getattr(message, "chat", None)
+            if from_user is None or chat is None:
+                return "پیام فاقد شناسهٔ کاربر یا گفت‌وگو است."
+            if text == "/projects":
+                projects = await jobs.list_projects()
+                return "\n".join(f"• {row['slug']} — {row['name']}" for row in projects) or "پروژهٔ فعالی ثبت نشده است."
+            if text.startswith("/project "):
+                slug = text.removeprefix("/project ").strip()
+                return "پروژه انتخاب شد." if await jobs.select_project(from_user.id, chat.id, slug) else "پروژه پیدا نشد؛ /projects را ببینید."
+            job_id = await jobs.create_from_text(from_user.id, chat.id, text or "[media message]")
+            return f"درخواست ثبت شد و در حال پردازش است. شناسهٔ کار: {job_id}"
+
+        service = TelegramBotService(settings, reply)
+        await service.run_polling()
 
 
 def health_registry(settings: Settings) -> HealthRegistry:

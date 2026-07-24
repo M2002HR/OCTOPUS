@@ -70,6 +70,8 @@ def create_app(
 
     @app.get("/projects")
     async def projects() -> list[dict[str, object]]:
+        if jobs is not None:
+            return await jobs.list_projects()
         return settings.projects
 
     @app.get("/jobs/{job_id}")
@@ -79,7 +81,34 @@ def create_app(
         record = await jobs.get(job_id)
         if record is None:
             raise HTTPException(status_code=404, detail=f"job {job_id} was not found")
-        return {"id": record.id, "state": record.state, "objective": record.objective, "result": record.result_summary}
+        return {
+            "id": record.id,
+            "state": record.state,
+            "objective": record.objective,
+            "result": record.result_summary,
+            "error_code": record.error_code,
+            "error_message": record.error_message,
+            "codex_thread_id": record.codex_thread_id,
+            "codex_turn_id": record.codex_turn_id,
+        }
+
+    @app.get("/jobs/{job_id}/events")
+    async def job_events(job_id: str) -> list[dict[str, object]]:
+        if jobs is None:
+            raise HTTPException(status_code=503, detail="job service is unavailable")
+        if await jobs.get(job_id) is None:
+            raise HTTPException(status_code=404, detail=f"job {job_id} was not found")
+        return [
+            {
+                "sequence": row.sequence,
+                "event_type": row.event_type,
+                "level": row.level,
+                "message": row.message,
+                "data": row.data_json,
+                "created_at": row.created_at.isoformat(),
+            }
+            for row in await jobs.events(job_id)
+        ]
 
     @app.post("/jobs")
     async def create_job(request: JobRequest) -> dict[str, str]:
