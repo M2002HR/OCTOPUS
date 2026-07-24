@@ -22,7 +22,7 @@ or shell history.
 | `VOICE_AGENT_ALLOWED_PEER_IDS` | empty | Required comma-separated numeric allowlist for outbound calls. |
 | `VOICE_AGENT_TEST_PEER_USERNAME` | empty | Convenience value only; the CLI still requires `--username`. |
 | `VOICE_AGENT_INBOUND_ENABLED` | `false` | Must be explicitly `true` before `serve` starts the persistent inbound service. |
-| `VOICE_AGENT_INBOUND_USERNAME` | empty | The sole inbound caller. It is resolved at startup and must also be in the numeric allowlist. |
+| `VOICE_AGENT_INBOUND_USERNAMES` | empty | Comma-separated inbound callers. Each is resolved at startup and must also be in the numeric allowlist. |
 | `VOICE_AGENT_REQUIRE_DISCLOSURE` | `true` | Announces automated processing when a call connects. |
 | `VOICE_AGENT_CALL_TIMEOUT_SEC` | `120` | PyTgCalls connection timeout; minimum `10`. |
 
@@ -31,15 +31,16 @@ by Telethon carries signaling only; it does not prove that the host can reach Te
 reflectors. See the VoIP section of [Troubleshooting](troubleshooting.md).
 
 The inbound server accepts only one active call and immediately declines every caller whose numeric
-ID differs from the startup-resolved `VOICE_AGENT_INBOUND_USERNAME`. Changing the username requires
-a service restart; this avoids accepting a renamed or unverified account by string comparison at
-call time.
+ID is absent from the startup-resolved `VOICE_AGENT_INBOUND_USERNAMES` list. Changing the list
+requires a service restart; this avoids accepting a renamed or unverified account by string
+comparison at call time. `VOICE_AGENT_INBOUND_USERNAME` is accepted only as a one-user migration
+fallback when the new list is absent.
 
 ## Voice behavior
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `VOICE_AGENT_LANGUAGE` | `fa` | STT language hint. |
+| `VOICE_AGENT_LANGUAGE` | `en` | English STT language hint. |
 | `VOICE_AGENT_SYSTEM_PROMPT` | general assistant prompt | System instruction sent to Ajil chat. |
 | `VOICE_AGENT_MAX_HISTORY_MESSAGES` | `12` | Per-call rolling user/assistant history count. |
 | `VOICE_AGENT_MAX_TURN_SECONDS` | `45` | Hard upper bound for one detected utterance. |
@@ -48,7 +49,7 @@ call time.
 | `VOICE_AGENT_VAD_START_RMS` | `350` | Energy needed to begin a candidate utterance. |
 | `VOICE_AGENT_VAD_CONTINUE_RMS` | `240` | Lower continuation energy; must not exceed start RMS. |
 | `VOICE_AGENT_VAD_START_MS` | `80` | Minimum sustained speech before an utterance starts. |
-| `VOICE_AGENT_VAD_END_SILENCE_MS` | `600` | Continuous quiet required to finish an utterance. |
+| `VOICE_AGENT_VAD_END_SILENCE_MS` | `1200` | Continuous quiet required to finish an utterance. |
 | `VOICE_AGENT_VAD_MIN_UTTERANCE_MS` | `250` | Shorter audio is discarded as noise. |
 | `VOICE_AGENT_VAD_PRE_ROLL_MS` | `200` | Audio preserved immediately before detected speech. |
 
@@ -67,8 +68,7 @@ call time.
 | `UAG_TIMEOUT_SEC` | `45` | HTTP timeout per STT/chat request. |
 | `AI_CHAT_MODELS`, `AI_CHAT_PROVIDERS` | empty | Ajil chat routing choices. |
 | `AI_TRANSCRIPTION_PROVIDER`, `AI_TRANSCRIPTION_MODELS` | empty | Ajil STT provider configuration; the direct STT route selects its configured provider/model. |
-| `EDGE_TTS_VOICE`, `EDGE_TTS_RATE` | `fa-IR-FaridNeural`, `+0%` | Male fallback Edge TTS voice and rate. |
-| `EDGE_TTS_VOICE_BY_LANGUAGE` | male Persian/Arabic/Turkish/English map | Optional comma-separated `language:voice` map selected from the reply script. |
+| `EDGE_TTS_VOICE`, `EDGE_TTS_RATE` | `en-US-AndrewMultilingualNeural`, `+0%` | English Edge TTS voice and rate. |
 | `FFMPEG_BIN` | `ffmpeg` | Ogg/Opus conversion executable. |
 | `VOICE_AGENT_UAG_PORT` | `18081` | Host port for the Compose Ajil gateway. |
 | `UAG_PROXY_URL_DOCKER` | empty | Docker-reachable proxy URL for Ajil; separate from a host-loopback URL. |

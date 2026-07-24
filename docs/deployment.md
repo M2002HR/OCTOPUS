@@ -28,7 +28,7 @@ docker compose up -d --wait uag-gateway
 
 `docker compose up -d --wait uag-gateway` starts `uag-redis` and the pinned Ajil gateway. The
 `voice-agent` service is deliberately behind the `agent` profile. Its `serve` command accepts only
-the startup-resolved `VOICE_AGENT_INBOUND_USERNAME`; it does not dial anyone. It has
+the startup-resolved `VOICE_AGENT_INBOUND_USERNAMES`; it does not dial anyone. It has
 `restart: unless-stopped` so it returns after a process or Docker restart.
 
 Before enabling it, stop every other client/container using the same Telethon string session. Then
@@ -53,7 +53,7 @@ Run a non-call end-to-end verification from the host, pointing at the published 
 
 ```bash
 UAG_BASE_URL=http://127.0.0.1:18081 \
-  .venv/bin/telegram-voice-agent process-file runtime/verification/edge-smoke.ogg --language fa
+  .venv/bin/telegram-voice-agent process-file runtime/verification/edge-smoke.ogg --language en
 ```
 
 ## Updating Ajil
