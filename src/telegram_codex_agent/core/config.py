@@ -19,7 +19,11 @@ _INTERPOLATION = re.compile(r"\$\{([A-Z0-9_]+)(?::-(.*?))?\}")
 def _expand(value: object) -> object:
     if isinstance(value, str):
         return _INTERPOLATION.sub(
-            lambda match: os.getenv(match.group(1), match.group(2) or ""), value
+            # An explicitly empty value in .env means "use the policy default".
+            # This makes checked-in examples safe and avoids silently selecting a
+            # provider's moving default model.
+            lambda match: os.getenv(match.group(1)) or match.group(2) or "",
+            value,
         )
     if isinstance(value, list):
         return [_expand(item) for item in value]
@@ -88,7 +92,7 @@ class AjilConfig(BaseModel):
 
 class CodexConfig(BaseModel):
     binary: str = "codex"
-    model: str = ""
+    model: str = "gpt-5.5"
     reasoning_effort: str = "high"
     approval_policy: Literal["never", "on-request", "untrusted"] = "never"
     sandbox_mode: Literal["read-only", "workspace-write", "danger-full-access"] = (

@@ -12,6 +12,7 @@ import uvicorn
 from telegram_codex_agent.api.app import create_app
 from telegram_codex_agent.core.config import load_settings
 from telegram_codex_agent.integrations.ajil import AjilClient
+from telegram_codex_agent.integrations.codex import CodexAppServer
 from telegram_codex_agent.runtime import health_registry, job_service
 
 app = typer.Typer(no_args_is_help=True)
@@ -89,6 +90,26 @@ def codex_status(path: Path | None = typer.Option(None, "--config")) -> None:
             indent=2,
         )
     )
+
+
+@codex_app.command("smoke")
+def codex_smoke(path: Path | None = typer.Option(None, "--config")) -> None:
+    """Run a live, non-mutating App Server turn when credentials are available."""
+
+    async def run() -> None:
+        settings = _settings(path)
+        async with CodexAppServer(settings.codex) as client:
+            thread = await client.start_thread(Path.cwd(), ephemeral=True)
+            result = await client.run_turn(
+                thread,
+                "Return exactly CODEX_SMOKE_OK. Do not inspect, read, modify, or create any files. Do not run any commands.",
+                timeout=90,
+            )
+        if result.status != "completed" or result.text != "CODEX_SMOKE_OK":
+            raise typer.Exit(code=1)
+        typer.echo(json.dumps({"ok": True, "thread_id": result.thread_id, "turn_id": result.turn_id}))
+
+    asyncio.run(run())
 
 
 def main() -> None:
