@@ -24,6 +24,44 @@ from telegram_codex_agent.telegram.normalization import deterministic_inbox_path
 logger = logging.getLogger(__name__)
 
 
+def format_token_usage(raw: object) -> str:
+    usage = raw if isinstance(raw, dict) else {}
+    total = usage.get("total") if isinstance(usage.get("total"), dict) else {}
+    last = usage.get("last") if isinstance(usage.get("last"), dict) else {}
+
+    def number(source: dict[object, object], key: str) -> int:
+        try:
+            return max(0, int(source.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    total_tokens = number(total, "totalTokens")
+    if not total_tokens:
+        return "Usage: not recorded yet"
+    context_window = number(usage, "modelContextWindow")
+    lines = [
+        f"Usage total: {total_tokens:,} tokens",
+        (
+            "Input / cached / output / reasoning: "
+            f"{number(total, 'inputTokens'):,} / "
+            f"{number(total, 'cachedInputTokens'):,} / "
+            f"{number(total, 'outputTokens'):,} / "
+            f"{number(total, 'reasoningOutputTokens'):,}"
+        ),
+        f"Last turn: {number(last, 'totalTokens'):,} tokens",
+    ]
+    if context_window:
+        # `total` is cumulative across the thread and may legitimately exceed
+        # one context window after multiple turns or compaction.
+        lines.append(f"Context window capacity: {context_window:,} tokens")
+    return "\n".join(lines)
+
+
+def session_activity_label(activity: object) -> str:
+    value = str(activity or "idle · no tasks")
+    return f"🟢 {value.upper()}" if value == "running" else f"⚪ {value.upper()}"
+
+
 async def extract_bot_media(message: object, settings: Settings) -> tuple[str, str, dict[str, object]]:
     """Download one Telegram attachment into the managed artifact inbox.
 
@@ -119,6 +157,7 @@ async def run_bot() -> None:
                 "📁 Projects": "/projects",
                 "💬 Sessions": "/resume",
                 "🧾 Jobs": "/jobs",
+                "📚 History": "/history",
                 "🌐 Browser": "/browser",
                 "🔍 Review": "/review",
                 "📜 Logs": "/logs",
@@ -131,6 +170,8 @@ async def run_bot() -> None:
                 "nav:settings": "/config",
                 "nav:logs": "/logs",
                 "nav:permissions": "/permissions",
+                "nav:history": "/history",
+                "nav:usage": "/usage",
                 "nav:model": "/model",
                 "nav:reasoning": "/reasoning",
                 "nav:language": "/language",
@@ -148,6 +189,8 @@ async def run_bot() -> None:
                 text = f"/project {text.removeprefix('project:')}"
             if text.startswith("session:"):
                 text = f"/resume {text.removeprefix('session:')}"
+            if text.startswith("sessionhistory:"):
+                text = f"/history {text.removeprefix('sessionhistory:')}"
             if text.startswith("config:model:"):
                 text = f"/config model {text.removeprefix('config:model:')}"
             if text.startswith("config:effort:"):
@@ -170,6 +213,7 @@ async def run_bot() -> None:
                         [("📊 Status", "nav:home_status"), ("📜 Live logs", "nav:logs")],
                         [("⚙️ Settings", "nav:settings"), ("🔐 Permissions", "nav:permissions")],
                         [("➕ New session", "cmd:new"), ("🧾 Jobs", "nav:jobs")],
+                        [("📚 Current history", "nav:history"), ("📈 Usage", "nav:usage")],
                         [("🌐 Browser & screenshots", "nav:browser"), ("🔍 Review & diff", "nav:review")],
                     ],
                     show_main_keyboard=True,
@@ -184,6 +228,8 @@ async def run_bot() -> None:
                     "/new — fresh session in the current workspace\n"
                     "/resume — continue an existing Codex thread\n"
                     "/status — workspace, model, permission and latest job\n"
+                    "/usage — active session token/context usage\n"
+                    "/history — active session prompts, results and logs\n"
                     "/permissions — Read Only / Workspace / Full Access\n"
                     "/model and /reasoning — execution model controls\n"
                     "/language — voice input and AI response language\n"
@@ -224,22 +270,39 @@ async def run_bot() -> None:
                 if not sessions:
                     return BotResponse("There are no saved Codex sessions yet.", [[("➕ New session", "cmd:new")]])
                 return BotResponse(
-                    "Choose a Codex thread to continue. The next task will use thread/resume:\n\n"
+                    "Choose a Codex thread to continue. SELECTED means it is the current context; "
+                    "RUNNING means a job is executing, while IDLE means no work is in flight.\n\n"
                     + "\n".join(
-                        f"{'●' if row['active'] else '○'} {row['project']} · {str(row['thread_id'])[:8]} · {row['model']}"
+                        f"{'● SELECTED' if row['selected'] else '○'} · "
+                        f"{session_activity_label(row['activity'])} · "
+                        f"{row['project']} · {str(row['thread_id'])[:8]} · {row['model']}"
                         for row in sessions
                     ),
-                    [[(f"{'●' if row['active'] else '○'} {row['project']} · {str(row['thread_id'])[:8]}", f"session:{row['id']}")]
-                     for row in sessions],
+                    [[
+                        (
+                            f"{'●' if row['selected'] else '○'} "
+                            f"{'🟢' if row['activity'] == 'running' else '⚪'} "
+                            f"{row['project']} · {str(row['thread_id'])[:8]}",
+                            f"session:{row['id']}",
+                        ),
+                        ("📖 History", f"sessionhistory:{row['id']}"),
+                    ] for row in sessions],
                 )
             if text.startswith("/resume "):
                 session_id = text.removeprefix("/resume ").strip()
-                return "Codex session resumed. Send the next task to continue its context." if await jobs.resume_codex_session(user_id, chat.id, session_id) else "That session was not found in this Telegram chat."
+                return BotResponse(
+                    "Codex session selected. Send the next task to continue its context.",
+                    [[("📖 Session history", f"sessionhistory:{session_id}"), ("📊 Status", "nav:home_status")]],
+                ) if await jobs.resume_codex_session(user_id, chat.id, session_id) else "That session was not found in this Telegram chat."
             if text == "/status":
                 context = await jobs.active_context(user_id, chat.id)
                 preferences = context[0].preferences_json if context else {}
-                sessions = await jobs.list_codex_sessions(user_id, chat.id, limit=1)
-                recent = await jobs.recent_jobs(user_id, chat.id, limit=1)
+                current = await jobs.current_codex_session(user_id, chat.id)
+                latest_job = "none"
+                if current and current["latest_job_state"]:
+                    latest_job = str(current["latest_job_state"])
+                    if current["latest_job_id"]:
+                        latest_job += f" · {str(current['latest_job_id'])[:8]}"
                 return BotResponse(
                     "Octopus status: ONLINE\n"
                     f"Codex model: {preferences.get('codex_model') or settings.codex.model}\n"
@@ -247,10 +310,83 @@ async def run_bot() -> None:
                     f"Language: {preferences.get('response_language') or settings.app.language}\n"
                     f"Permissions: {preferences.get('sandbox_mode') or settings.codex.sandbox_mode}\n"
                     f"Live logs: {preferences.get('log_level') or 'info'}\n"
-                    f"Codex thread: {str(sessions[0]['thread_id'])[:12] if sessions else 'not started'}\n"
-                    f"Latest job: {recent[0].state if recent else 'none'}",
-                    [[("💬 Sessions", "nav:sessions"), ("🧾 Jobs", "nav:jobs")], [("🔐 Permissions", "nav:permissions"), ("⚙️ Settings", "nav:settings")]],
+                    f"Codex thread: {str(current['thread_id'])[:12] if current else 'not started'}\n"
+                    f"Session state: {session_activity_label(current['activity']) if current else '⚪ IDLE · NO CODEX THREAD'}\n"
+                    f"Latest job: {latest_job}\n\n"
+                    f"{format_token_usage(current['usage'] if current else {})}",
+                    [
+                        [("💬 Sessions", "nav:sessions"), ("📚 History", "nav:history")],
+                        [("📈 Usage", "nav:usage"), ("🧾 Jobs", "nav:jobs")],
+                        [("🔐 Permissions", "nav:permissions"), ("⚙️ Settings", "nav:settings")],
+                    ],
                 )
+            if text == "/usage":
+                current = await jobs.current_codex_session(user_id, chat.id)
+                if current is None:
+                    return BotResponse(
+                        "The active conversation does not have a Codex thread yet.",
+                        [[("➕ New session", "cmd:new"), ("💬 Sessions", "nav:sessions")]],
+                    )
+                return BotResponse(
+                    f"Active Codex session\n"
+                    f"Workspace: {current['project']}\n"
+                    f"Thread: {str(current['thread_id'])[:12]}\n"
+                    f"Model: {current['model']}\n"
+                    f"State: {session_activity_label(current['activity'])}\n\n"
+                    f"{format_token_usage(current['usage'])}",
+                    [[("📚 History", "nav:history"), ("📊 Status", "nav:home_status")]],
+                )
+            if text == "/history" or text.startswith("/history "):
+                session_id = text.removeprefix("/history").strip() or None
+                history = await jobs.session_history(
+                    user_id,
+                    chat.id,
+                    session_id,
+                )
+                if history is None:
+                    return BotResponse(
+                        "No Codex history exists for this session yet.",
+                        [[("💬 Sessions", "nav:sessions"), ("➕ New session", "cmd:new")]],
+                    )
+                job_rows = history["jobs"]
+                lines = [
+                    "Codex session history",
+                    f"Workspace: {history['project']}",
+                    f"Thread: {str(history['thread_id'])[:12]}",
+                    f"Model: {history['model']}",
+                    f"Selected: {'yes' if history['selected'] else 'no'}",
+                    format_token_usage(history["usage"]),
+                ]
+                buttons: list[list[tuple[str, str]]] = []
+                if not job_rows:
+                    lines.extend(["", "No tasks have run in this session."])
+                for index, row in enumerate(reversed(job_rows), start=1):
+                    objective = str(row["objective"]).strip()
+                    result = str(row["result"]).strip() or "No result yet."
+                    lines.extend(
+                        [
+                            "",
+                            f"── Task {index} · {row['state']} · {str(row['id'])[:8]} ──",
+                            f"Command:\n{objective[:1200]}",
+                            f"Result:\n{result[:1600]}",
+                            "Logs:",
+                        ]
+                    )
+                    events = row["events"]
+                    lines.extend(
+                        f"{event.sequence}. {event.event_type}: {event.message[:500]}"
+                        for event in events
+                    )
+                    buttons.append(
+                        [
+                            (f"📜 Full log {str(row['id'])[:8]}", f"joblogs:{row['id']}"),
+                            (f"🧾 Result {str(row['id'])[:8]}", f"job:{row['id']}"),
+                        ]
+                    )
+                buttons.append(
+                    [("💬 Sessions", "nav:sessions"), ("📊 Status", "nav:home_status")]
+                )
+                return BotResponse("\n".join(lines), buttons)
             if text == "/jobs":
                 rows = await jobs.recent_jobs(user_id, chat.id)
                 if not rows:
@@ -270,7 +406,7 @@ async def run_bot() -> None:
                     [[("📜 Event log", f"joblogs:{job.id}"), ("🛑 Stop", f"jobstop:{job.id}")]],
                 ) if job else "Job not found in this Telegram chat."
             if text.startswith("joblogs:"):
-                text = f"/logs {text.removeprefix('joblogs:')}"
+                text = f"/logs {text.removeprefix('joblogs:').replace(':', ' ', 1)}"
             if text.startswith("jobstop:"):
                 text = f"/stop {text.removeprefix('jobstop:')}"
             if text == "/logs":
@@ -297,15 +433,39 @@ async def run_bot() -> None:
                     [[("📜 Log settings", "nav:logs"), ("🏠 Home", "nav:home")]],
                 ) if saved else "Send one task first so your account can be registered."
             if text.startswith("/logs "):
-                job_id = text.removeprefix("/logs ").strip()
+                arguments = text.removeprefix("/logs ").split()
+                job_id = arguments[0] if arguments else ""
+                try:
+                    page = max(0, int(arguments[1])) if len(arguments) > 1 else 0
+                except ValueError:
+                    return "Log page must be a non-negative number."
                 job = await jobs.get_for_context(user_id, chat.id, job_id)
                 if job is None:
                     return "Job not found."
                 events = await jobs.events(job_id)
-                return "\n".join(
-                    f"{row.sequence}. {row.event_type}: {row.message}"
-                    for row in events[-40:]
-                ) or "No events were recorded."
+                if not events:
+                    return "No events were recorded."
+                page_size = 20
+                page_count = max(1, (len(events) + page_size - 1) // page_size)
+                page = min(page, page_count - 1)
+                selected_events = events[page * page_size : (page + 1) * page_size]
+                buttons: list[tuple[str, str]] = []
+                if page > 0:
+                    buttons.append(("⬅️ Previous", f"joblogs:{job_id}:{page - 1}"))
+                if page + 1 < page_count:
+                    buttons.append(("Next ➡️", f"joblogs:{job_id}:{page + 1}"))
+                return BotResponse(
+                    f"Job log {job_id[:8]} · page {page + 1}/{page_count}\n\n"
+                    + "\n".join(
+                        f"{row.created_at.isoformat(timespec='seconds')} · "
+                        f"{row.level.upper()} · {row.sequence}. "
+                        f"{row.event_type}: {row.message}"
+                        for row in selected_events
+                    ),
+                    [buttons, [("🧾 Job result", f"job:{job_id}"), ("📚 History", "nav:history")]]
+                    if buttons
+                    else [[("🧾 Job result", f"job:{job_id}"), ("📚 History", "nav:history")]],
+                )
             if text.startswith("/stop "):
                 job_id = text.removeprefix("/stop ").strip()
                 return "Cancellation requested." if await jobs.cancel_for_context(user_id, chat.id, job_id) else "The job is already terminal or was not found."

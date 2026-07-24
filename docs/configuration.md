@@ -21,6 +21,11 @@ English is the default. Model and reasoning selections are sent as explicit
 At log level `info` or `debug`, public Codex commentary is forwarded to
 Telegram; private reasoning events are never forwarded.
 
+`/status` and `/usage` read persisted `thread/tokenUsage/updated` notifications.
+`/history` is scoped to the requesting Telegram user/chat and shows the active
+thread's prompts, results, and job-event log. The `/resume` picker displays
+selection and execution state independently.
+
 ## Telegram and call policy
 
 | Variable | Default | Meaning |

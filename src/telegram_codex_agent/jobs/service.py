@@ -19,6 +19,23 @@ from telegram_codex_agent.db.models import (
 from telegram_codex_agent.jobs.models import IntentType, JobState
 from telegram_codex_agent.jobs.queue import RedisStreamJobQueue
 
+_RUNNING_JOB_STATES = {
+    JobState.RECEIVED.value,
+    JobState.NORMALIZING.value,
+    JobState.CONTEXT_RESOLUTION.value,
+    JobState.MEMORY_RETRIEVAL.value,
+    JobState.CLASSIFYING.value,
+    JobState.PLANNING.value,
+    JobState.PLANNED.value,
+    JobState.QUEUED.value,
+    JobState.RUNNING.value,
+    JobState.WAITING_EXTERNAL.value,
+    JobState.VERIFYING.value,
+    JobState.REPORTING.value,
+    JobState.CANCEL_REQUESTED.value,
+    JobState.RECOVERING.value,
+}
+
 
 class JobService:
     """Transactional ingress: durable context/message/job first, Redis delivery second."""
@@ -150,6 +167,13 @@ class JobService:
             project_id = current.project_id if current else None
             if current:
                 current.status = "closed"
+                threads = await session.scalars(
+                    select(CodexThread).where(
+                        CodexThread.conversation_id == current.id
+                    )
+                )
+                for thread in threads:
+                    thread.status = "idle"
             conversation = Conversation(
                 user_id=user.id,
                 chat_id=chat.id,
@@ -177,17 +201,123 @@ class JobService:
                 .order_by(CodexThread.updated_at.desc())
                 .limit(limit)
             )
-            return [
-                {
+            result: list[dict[str, object]] = []
+            for thread, conversation, project in rows:
+                latest_job = await session.scalar(
+                    select(Job)
+                    .where(Job.conversation_id == conversation.id)
+                    .order_by(Job.created_at.desc())
+                    .limit(1)
+                )
+                latest_state = latest_job.state if latest_job else ""
+                if latest_state in _RUNNING_JOB_STATES:
+                    activity = "running"
+                elif latest_state:
+                    activity = f"idle · last {latest_state}"
+                else:
+                    activity = "idle · no tasks"
+                usage = thread.metadata_json.get("token_usage", {})
+                result.append(
+                    {
                     "id": thread.id,
                     "thread_id": thread.codex_thread_id,
                     "project": project.name if project else "No project",
                     "model": thread.model,
-                    "active": conversation.status == "active",
+                    "selected": conversation.status == "active",
+                    "activity": activity,
+                    "latest_job_id": latest_job.id if latest_job else "",
+                    "latest_job_state": latest_state,
+                    "usage": usage if isinstance(usage, dict) else {},
                     "updated_at": thread.updated_at,
-                }
-                for thread, conversation, project in rows
-            ]
+                    }
+                )
+            return result
+
+    async def current_codex_session(
+        self,
+        telegram_user_id: int,
+        telegram_chat_id: int,
+    ) -> dict[str, object] | None:
+        sessions = await self.list_codex_sessions(
+            telegram_user_id,
+            telegram_chat_id,
+            limit=100,
+        )
+        return next((row for row in sessions if row["selected"]), None)
+
+    async def session_history(
+        self,
+        telegram_user_id: int,
+        telegram_chat_id: int,
+        session_id: str | None = None,
+        *,
+        job_limit: int = 10,
+        event_limit: int = 25,
+    ) -> dict[str, object] | None:
+        async with self.sessions() as session:
+            statement = (
+                select(CodexThread, Conversation, Project)
+                .join(Conversation, CodexThread.conversation_id == Conversation.id)
+                .join(User, Conversation.user_id == User.id)
+                .join(Chat, Conversation.chat_id == Chat.id)
+                .outerjoin(Project, CodexThread.project_id == Project.id)
+                .where(
+                    User.telegram_user_id == telegram_user_id,
+                    Chat.telegram_chat_id == telegram_chat_id,
+                )
+            )
+            if session_id:
+                statement = statement.where(CodexThread.id == session_id)
+            else:
+                statement = statement.where(Conversation.status == "active")
+            row = (
+                await session.execute(
+                    statement.order_by(CodexThread.updated_at.desc()).limit(1)
+                )
+            ).first()
+            if row is None:
+                return None
+            thread, conversation, project = row
+            jobs = list(
+                await session.scalars(
+                    select(Job)
+                    .where(Job.conversation_id == conversation.id)
+                    .order_by(Job.created_at.desc())
+                    .limit(job_limit)
+                )
+            )
+            job_rows: list[dict[str, object]] = []
+            for job in jobs:
+                events = list(
+                    await session.scalars(
+                        select(JobEventRow)
+                        .where(JobEventRow.job_id == job.id)
+                        .order_by(JobEventRow.sequence.desc())
+                        .limit(event_limit)
+                    )
+                )
+                events.reverse()
+                job_rows.append(
+                    {
+                        "id": job.id,
+                        "state": job.state,
+                        "objective": job.objective,
+                        "result": job.result_summary or job.error_message,
+                        "created_at": job.created_at,
+                        "completed_at": job.completed_at,
+                        "events": events,
+                    }
+                )
+            usage = thread.metadata_json.get("token_usage", {})
+            return {
+                "id": thread.id,
+                "thread_id": thread.codex_thread_id,
+                "project": project.name if project else "No project",
+                "model": thread.model,
+                "selected": conversation.status == "active",
+                "usage": usage if isinstance(usage, dict) else {},
+                "jobs": job_rows,
+            }
 
     async def resume_codex_session(
         self, telegram_user_id: int, telegram_chat_id: int, session_id: str
@@ -218,6 +348,13 @@ class JobService:
             )
             for row in active_rows:
                 row.status = "closed"
+                threads = await session.scalars(
+                    select(CodexThread).where(
+                        CodexThread.conversation_id == row.id
+                    )
+                )
+                for thread in threads:
+                    thread.status = "idle"
             conversation.status = "active"
             target.status = "active"
             await session.commit()

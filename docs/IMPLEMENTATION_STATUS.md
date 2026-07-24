@@ -29,4 +29,5 @@ Evidence is recorded here rather than inferred from design documents.
 - [x] Codex CLI-style Telegram UX: persistent/inline keyboards, workspace discovery under `~/Code`, `/new`, real `thread/resume`, `/status`, `/permissions`, model/reasoning controls, and scoped job logs
 - [x] Live level-controlled Codex lifecycle/activity streaming and verified Telegram screenshot/artifact delivery
 - [x] Runtime model/reasoning/language selectors and safe public Codex commentary streaming
+- [x] Codex-style status usage, explicit running/idle session states, scoped session history, and paginated durable logs
 - [x] Redis pending-message recovery coordinated with PostgreSQL leases, plus Codex-driven Chrome Lab/browser verification and artifact handoff
