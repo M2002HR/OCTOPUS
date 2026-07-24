@@ -130,7 +130,13 @@ class CodexAppServer:
                 future.set_exception(CodexProtocolError("Codex App Server closed"))
         self._pending.clear()
 
-    async def request(self, method: str, params: Json, *, timeout: float = 60) -> Json:
+    async def request(
+        self,
+        method: str,
+        params: Json | None,
+        *,
+        timeout: float = 60,
+    ) -> Json:
         if not self.process or not self.process.stdin:
             raise CodexProtocolError("Codex App Server is not running")
         self._next_id += 1

@@ -220,7 +220,7 @@ class TelegramBotService:
             BotCommand(command="new", description="Start a fresh Codex session"),
             BotCommand(command="resume", description="Resume a saved Codex session"),
             BotCommand(command="status", description="Show the active Codex context"),
-            BotCommand(command="usage", description="Show active session token usage"),
+            BotCommand(command="usage", description="Show Codex weekly account limit"),
             BotCommand(command="history", description="Show active session history and logs"),
             BotCommand(command="projects", description="Choose a workspace under Code"),
             BotCommand(command="jobs", description="View recent and running jobs"),

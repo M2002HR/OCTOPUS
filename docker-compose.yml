@@ -253,6 +253,10 @@ services:
       PATH: /host-codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       PYTHONPATH: /workspace/octopus/src
       TELEGRAM_BOT_PROXY_URL: ${TELEGRAM_BOT_PROXY_URL:-http://127.0.0.1:3128}
+      # `/usage` queries the authenticated Codex App Server directly.
+      HTTP_PROXY: ${CODEX_HTTP_PROXY_URL:-http://127.0.0.1:3128}
+      HTTPS_PROXY: ${CODEX_HTTP_PROXY_URL:-http://127.0.0.1:3128}
+      NO_PROXY: 127.0.0.1,localhost
     volumes:
       - .:/workspace/octopus
       - ${WORKSPACE_ROOT_HOST:-/home/mhr/Code}:/workspace/code

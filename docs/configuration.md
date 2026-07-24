@@ -21,7 +21,12 @@ English is the default. Model and reasoning selections are sent as explicit
 At log level `info` or `debug`, public Codex commentary is forwarded to
 Telegram; private reasoning events are never forwarded.
 
-`/status` and `/usage` read persisted `thread/tokenUsage/updated` notifications.
+`/status` combines the live Codex account quota with persisted
+`thread/tokenUsage/updated` notifications for the selected session. `/usage`
+reads `account/rateLimits/read` from the authenticated local Codex App Server
+and shows the weekly remaining percentage and reset time. The result is cached
+for one minute, with a clearly labelled last-known fallback if Codex is
+temporarily unreachable.
 `/history` is scoped to the requesting Telegram user/chat and shows the active
 thread's prompts, results, and job-event log. The `/resume` picker displays
 selection and execution state independently.

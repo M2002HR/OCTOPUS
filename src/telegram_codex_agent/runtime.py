@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from redis.asyncio import from_url
+from redis.asyncio import Redis, from_url
 from sqlalchemy import text
 
 from telegram_codex_agent.api.app import HealthRegistry
+from telegram_codex_agent.codex_usage import format_codex_account_limits
 from telegram_codex_agent.core.config import Settings, load_settings
 from telegram_codex_agent.db.session import create_engine, create_session_factory
 from telegram_codex_agent.integrations.ajil import AjilClient
+from telegram_codex_agent.integrations.codex import CodexAppServer
 from telegram_codex_agent.jobs.service import JobService
 from telegram_codex_agent.jobs.worker import Worker
 from telegram_codex_agent.memory import MemoryService
@@ -22,6 +25,66 @@ from telegram_codex_agent.telegram.bot import BotResponse, TelegramBotService
 from telegram_codex_agent.telegram.normalization import deterministic_inbox_path, sha256_file
 
 logger = logging.getLogger(__name__)
+_CODEX_LIMITS_CACHE_KEY = "telegram_codex_agent:codex:account_rate_limits:v1"
+_CODEX_LIMITS_LAST_KNOWN_KEY = f"{_CODEX_LIMITS_CACHE_KEY}:last_known"
+_codex_limits_lock = asyncio.Lock()
+
+
+def _decode_json_object(raw: object) -> dict[str, object] | None:
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+async def read_codex_account_limits(
+    settings: Settings,
+    redis: Redis,
+) -> tuple[dict[str, object], bool]:
+    """Read Codex account quotas, with a short shared cache and safe fallback.
+
+    The App Server startup is relatively expensive, so normal `/usage` and
+    `/status` requests share a one-minute snapshot. If Codex is temporarily
+    unreachable, the most recent one-day snapshot is returned and marked stale.
+    """
+
+    async def cached(key: str) -> dict[str, object] | None:
+        return _decode_json_object(await redis.get(key))
+
+    fresh = await cached(_CODEX_LIMITS_CACHE_KEY)
+    if fresh is not None:
+        return fresh, False
+    async with _codex_limits_lock:
+        fresh = await cached(_CODEX_LIMITS_CACHE_KEY)
+        if fresh is not None:
+            return fresh, False
+        try:
+            async with CodexAppServer(settings.codex) as codex:
+                payload = await codex.request(
+                    "account/rateLimits/read",
+                    None,
+                    timeout=max(60.0, settings.codex.startup_timeout_seconds),
+                )
+            encoded = json.dumps(payload, separators=(",", ":"))
+            await redis.set(_CODEX_LIMITS_CACHE_KEY, encoded, ex=60)
+            await redis.set(_CODEX_LIMITS_LAST_KNOWN_KEY, encoded, ex=86_400)
+            return payload, False
+        except Exception:
+            logger.warning("could not refresh Codex account rate limits", exc_info=True)
+            last_known = await cached(_CODEX_LIMITS_LAST_KNOWN_KEY)
+            return (last_known or {}), last_known is not None
+
+
+def format_account_limits(payload: object, settings: Settings, *, stale: bool) -> str:
+    result = format_codex_account_limits(payload, timezone_name=settings.app.timezone)
+    if stale:
+        result += "\nSnapshot: cached because the live Codex query failed"
+    return result
 
 
 def format_token_usage(raw: object) -> str:
@@ -227,8 +290,8 @@ async def run_bot() -> None:
                     "Codex-style commands:\n"
                     "/new — fresh session in the current workspace\n"
                     "/resume — continue an existing Codex thread\n"
-                    "/status — workspace, model, permission and latest job\n"
-                    "/usage — active session token/context usage\n"
+                    "/status — workspace, model, latest job and session tokens\n"
+                    "/usage — Codex account weekly limit and reset time\n"
                     "/history — active session prompts, results and logs\n"
                     "/permissions — Read Only / Workspace / Full Access\n"
                     "/model and /reasoning — execution model controls\n"
@@ -298,6 +361,10 @@ async def run_bot() -> None:
                 context = await jobs.active_context(user_id, chat.id)
                 preferences = context[0].preferences_json if context else {}
                 current = await jobs.current_codex_session(user_id, chat.id)
+                account_limits, limits_stale = await read_codex_account_limits(
+                    settings,
+                    jobs.redis,
+                )
                 latest_job = "none"
                 if current and current["latest_job_state"]:
                     latest_job = str(current["latest_job_state"])
@@ -313,6 +380,8 @@ async def run_bot() -> None:
                     f"Codex thread: {str(current['thread_id'])[:12] if current else 'not started'}\n"
                     f"Session state: {session_activity_label(current['activity']) if current else '⚪ IDLE · NO CODEX THREAD'}\n"
                     f"Latest job: {latest_job}\n\n"
+                    f"{format_account_limits(account_limits, settings, stale=limits_stale)}\n\n"
+                    "Active session tokens\n"
                     f"{format_token_usage(current['usage'] if current else {})}",
                     [
                         [("💬 Sessions", "nav:sessions"), ("📚 History", "nav:history")],
@@ -321,19 +390,16 @@ async def run_bot() -> None:
                     ],
                 )
             if text == "/usage":
-                current = await jobs.current_codex_session(user_id, chat.id)
-                if current is None:
-                    return BotResponse(
-                        "The active conversation does not have a Codex thread yet.",
-                        [[("➕ New session", "cmd:new"), ("💬 Sessions", "nav:sessions")]],
-                    )
+                account_limits, limits_stale = await read_codex_account_limits(
+                    settings,
+                    jobs.redis,
+                )
                 return BotResponse(
-                    f"Active Codex session\n"
-                    f"Workspace: {current['project']}\n"
-                    f"Thread: {str(current['thread_id'])[:12]}\n"
-                    f"Model: {current['model']}\n"
-                    f"State: {session_activity_label(current['activity'])}\n\n"
-                    f"{format_token_usage(current['usage'])}",
+                    format_account_limits(
+                        account_limits,
+                        settings,
+                        stale=limits_stale,
+                    ),
                     [[("📚 History", "nav:history"), ("📊 Status", "nav:home_status")]],
                 )
             if text == "/history" or text.startswith("/history "):

@@ -20,9 +20,11 @@ The Bot control center mirrors the core Codex CLI workflow:
 - `/new` creates a fresh Codex conversation in the selected workspace.
 - `/resume` lists saved threads and resumes the selected App Server thread.
 - `/status`, `/permissions`, `/model`, and `/reasoning` expose the active execution context.
-- `/status` includes the selected thread's live state and persisted token/context usage.
+- `/status` includes the selected thread's live state, persisted token/context usage,
+  and the current Codex account quota.
 - `/history` shows the active session's prompts, results, and paginated durable job logs.
-- `/usage` opens the detailed last-turn and cumulative session token breakdown.
+- `/usage` reads the authenticated Codex account's weekly limit, remaining
+  percentage, and reset time. It is independent of the selected session.
 - `/language` changes voice transcription and AI response language while keeping the control UI in English.
 - `/logs` controls live `error`, `info`, `debug`, or `off` progress; `/logs <job-id>` shows the durable event history.
 - `/diff` and `/review` run read-only Codex inspections.

@@ -42,6 +42,7 @@ class JobService:
 
     def __init__(self, sessions: async_sessionmaker[AsyncSession], redis: Redis, stream: str, group: str) -> None:
         self.sessions = sessions
+        self.redis = redis
         self.queue = RedisStreamJobQueue(redis, stream, group)
 
     async def create_from_text(
