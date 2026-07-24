@@ -36,13 +36,13 @@ async def test_transcription_uses_gateway_config_and_wav_mime_type(tmp_path: Pat
         assert 'name="language"' in body
         assert "groq/whisper" not in body
         assert "Content-Type: audio/x-wav" in body
-        return httpx.Response(200, json={"payload": {"text": "سلام"}}, request=request)
+        return httpx.Response(200, json={"payload": {"text": "Hello"}}, request=request)
 
     client = make_client()
     await client.client.aclose()
     client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
-        assert await client.transcribe(audio, language="fa") == "سلام"
+        assert await client.transcribe(audio, language="en") == "Hello"
     finally:
         await client.aclose()
 
@@ -53,7 +53,7 @@ async def test_chat_extracts_gateway_winner_and_rejects_errors() -> None:
         if request.url.path.endswith("chat/completions"):
             return httpx.Response(
                 200,
-                json={"winner": {"payload": {"choices": [{"message": {"content": "پاسخ"}}]}}},
+                json={"winner": {"payload": {"choices": [{"message": {"content": "Answer"}}]}}},
                 request=request,
             )
         return httpx.Response(502, json={}, request=request)
@@ -63,9 +63,9 @@ async def test_chat_extracts_gateway_winner_and_rejects_errors() -> None:
     client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
         response_text = await client.reply(
-            messages=[ChatMessage("user", "سلام")], system_prompt="x"
+            messages=[ChatMessage("user", "Hello")], system_prompt="x"
         )
-        assert response_text == "پاسخ"
+        assert response_text == "Answer"
         response = httpx.Response(502, request=httpx.Request("GET", "http://uag.test"))
         with pytest.raises(UAGError, match="HTTP 502"):
             client._expect_json(response)
@@ -88,7 +88,7 @@ async def test_vision_chat_uses_openai_data_url_content(tmp_path: Path) -> None:
         assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
         return httpx.Response(
             200,
-            json={"winner": {"payload": {"choices": [{"message": {"content": "تصویر"}}]}}},
+            json={"winner": {"payload": {"choices": [{"message": {"content": "Image"}}]}}},
             request=request,
         )
 
@@ -103,7 +103,7 @@ async def test_vision_chat_uses_openai_data_url_content(tmp_path: Path) -> None:
                 image_path=image,
                 prompt="What is shown?",
             )
-            == "تصویر"
+            == "Image"
         )
     finally:
         await client.aclose()
@@ -123,7 +123,7 @@ async def test_vision_chat_includes_each_referenced_image(tmp_path: Path) -> Non
         assert [item["type"] for item in content[1:]] == ["image_url", "image_url"]
         return httpx.Response(
             200,
-            json={"winner": {"payload": {"choices": [{"message": {"content": "تصاویر"}}]}}},
+            json={"winner": {"payload": {"choices": [{"message": {"content": "Images"}}]}}},
             request=request,
         )
 
@@ -136,9 +136,9 @@ async def test_vision_chat_includes_each_referenced_image(tmp_path: Path) -> Non
                 messages=[],
                 system_prompt="system",
                 image_paths=(first, second),
-                prompt="مقایسه کن",
+                prompt="Compare them",
             )
-            == "تصاویر"
+            == "Images"
         )
     finally:
         await client.aclose()

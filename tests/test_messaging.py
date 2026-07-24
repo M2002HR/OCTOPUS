@@ -36,17 +36,17 @@ class FakeClient:
 
 class FakeUAG:
     async def reply(self, *, messages: list[ChatMessage], system_prompt: str) -> str:
-        assert messages[-1].content == "سلام"
+        assert messages[-1].content == "Hello"
         assert "send_media" in system_prompt
-        return "این فایل برای شماست [[send_media:guide]]"
+        return "Here is the file. [[send_media:guide]]"
 
     async def reply_with_images(self, **kwargs: object) -> str:
         assert kwargs["image_paths"]
-        return "تصویر دریافت شد"
+        return "Image received."
 
     async def transcribe(self, path: Path, *, language: str | None) -> str:
         assert path.is_file()
-        return "متن ویس"
+        return "Voice transcript"
 
 
 class VoiceRefusalUAG:
@@ -55,15 +55,15 @@ class VoiceRefusalUAG:
 
     async def reply(self, *, messages: list[ChatMessage], system_prompt: str) -> str:
         self.calls += 1
-        assert messages[-1].content == "سلام"
+        assert messages[-1].content == "Hello"
         if self.calls == 1:
-            return "متأسفم، امکان ارسال پاسخ صوتی ندارم."
+            return "I cannot send voice responses."
         assert "Do not say that you cannot send voice" in system_prompt
-        return "سلام، حالت چطوره؟"
+        return "Hello, how are you?"
 
 
 class FakeSynthesizer:
-    async def synthesize(self, text: str, destination: Path) -> int:
+    async def synthesize(self, text: str, destination: Path, *, language: str | None = None) -> int:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(b"ogg")
         return 250
@@ -121,7 +121,7 @@ def settings(tmp_path: Path) -> SimpleNamespace:
         message_vision_enabled=True,
         message_stt_language=None,
         message_max_media_bytes=1000,
-        language="fa",
+        language="en",
         system_prompt="base prompt",
         recording_mode="transcript_only",
     )
@@ -160,13 +160,13 @@ async def test_text_message_can_send_voice_and_requested_asset(tmp_path: Path) -
     assistant, client, store = make_assistant(tmp_path)
 
     reply, asset = await assistant._reply(
-        input_text="سلام",
+        input_text="Hello",
         image_paths=(),
         response_mode=ResponseMode.VOICE,
         trace_id="trace",
         conversation_id="message:11",
     )
-    assert reply == "این فایل برای شماست"
+    assert reply == "Here is the file."
     assert asset and asset.asset_id == "guide"
     await assistant._deliver_reply(
         reply=reply,
@@ -188,14 +188,14 @@ async def test_voice_delivery_refusal_is_retried_as_content(tmp_path: Path) -> N
     assistant.uag = refusing_uag  # type: ignore[assignment]
 
     reply, asset = await assistant._reply(
-        input_text="سلام",
+        input_text="Hello",
         image_paths=(),
         response_mode=ResponseMode.VOICE,
         trace_id="voice-retry",
         conversation_id="message:11",
     )
 
-    assert reply == "سلام، حالت چطوره؟"
+    assert reply == "Hello, how are you?"
     assert asset is None
     assert refusing_uag.calls == 2
     assert store.events_for_trace("voice-retry") == [
@@ -212,47 +212,47 @@ async def test_reply_context_adds_referenced_text_photo_and_voice_transcript(
 ) -> None:
     assistant, _, store = make_assistant(tmp_path)
     referenced_voice = FakeMessage(text="", voice=True)
-    referencing_voice = FakeMessage(text="جوابش چیه؟", reply=referenced_voice)
+    referencing_voice = FakeMessage(text="What does it say?", reply=referenced_voice)
     voice_context = await assistant._extract_reply_context(  # type: ignore[arg-type]
         referencing_voice, "voice-trace", "message:11"
     )
     assert voice_context.kind == "voice"
-    assert voice_context.text == "متن ویس"
-    voice_prompt = assistant._with_reply_context("چی گفت؟", voice_context)
+    assert voice_context.text == "Voice transcript"
+    voice_prompt = assistant._with_reply_context("What did it say?", voice_context)
     assert "already been fully transcribed" in voice_prompt
-    assert "متن ویس" in voice_prompt
+    assert "Voice transcript" in voice_prompt
 
-    referenced_photo = FakeMessage(text="این تصویر نمونه است", photo=True)
-    referencing_photo = FakeMessage(text="این چیه؟", reply=referenced_photo)
+    referenced_photo = FakeMessage(text="This is an example image.", photo=True)
+    referencing_photo = FakeMessage(text="What is this?", reply=referenced_photo)
     photo_context = await assistant._extract_reply_context(  # type: ignore[arg-type]
         referencing_photo, "photo-trace", "message:11"
     )
     assert photo_context.kind == "photo"
-    assert photo_context.text == "این تصویر نمونه است"
+    assert photo_context.text == "This is an example image."
     assert photo_context.image_paths[0].is_file()
-    prompt = assistant._with_reply_context("این چیه؟", photo_context)
+    prompt = assistant._with_reply_context("What is this?", photo_context)
     assert "replying to a photo" in prompt
-    assert "این تصویر نمونه است" in prompt
+    assert "This is an example image." in prompt
     store.close()
 
 
 def test_text_is_the_default_response_mode(tmp_path: Path) -> None:
     assistant, _, store = make_assistant(tmp_path)
 
-    mode, prompt = assistant._response_mode("سلام")
+    mode, prompt = assistant._response_mode("Hello")
 
     assert mode is ResponseMode.TEXT
-    assert prompt == "سلام"
+    assert prompt == "Hello"
     store.close()
 
 
 def test_explicit_text_request_overrides_voice_default(tmp_path: Path) -> None:
     assistant, _, store = make_assistant(tmp_path)
 
-    mode, prompt = assistant._response_mode("/text لطفاً کوتاه جواب بده")
+    mode, prompt = assistant._response_mode("/text reply briefly")
 
     assert mode is ResponseMode.TEXT
-    assert prompt == "لطفاً کوتاه جواب بده"
+    assert prompt == "reply briefly"
     store.close()
 
 

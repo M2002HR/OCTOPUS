@@ -11,11 +11,11 @@ def test_conversation_turns_are_queryable_by_call(tmp_path: Path) -> None:
         call_id="call-1",
         turn_id="turn-1",
         input_audio_path=Path("input.wav"),
-        input_language="fa",
-        transcript="سلام",
-        reply="سلام، بفرمایید.",
+        input_language="en",
+        transcript="Hello",
+        reply="Hello, dear.",
         output_audio_path=Path("output.ogg"),
         output_duration_ms=900,
     )
-    assert store.conversation_for_call("call-1") == [("سلام", "سلام، بفرمایید.")]
+    assert store.conversation_for_call("call-1") == [("Hello", "Hello, dear.")]
     store.close()
