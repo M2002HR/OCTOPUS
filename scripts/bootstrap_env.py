@@ -58,26 +58,29 @@ def main() -> None:
             "VOICE_AGENT_ALLOWED_PEER_IDS": "121166433",
             "VOICE_AGENT_TEST_PEER_USERNAME": "we_are_waiting_for_him",
             "VOICE_AGENT_INBOUND_ENABLED": "true",
-            "VOICE_AGENT_INBOUND_USERNAME": "we_are_waiting_for_him",
-            "VOICE_AGENT_REQUIRE_DISCLOSURE": "true",
+            "VOICE_AGENT_INBOUND_USERNAMES": "we_are_waiting_for_him",
+            "VOICE_AGENT_REQUIRE_DISCLOSURE": "false",
             "VOICE_AGENT_RECORDING_MODE": "transcript_only",
             "VOICE_AGENT_MAX_TURN_SECONDS": "45",
             "VOICE_AGENT_CALL_TIMEOUT_SEC": "120",
             "VOICE_AGENT_MAX_HISTORY_MESSAGES": "12",
-            "VOICE_AGENT_LANGUAGE": "fa",
+            "VOICE_AGENT_LANGUAGE": "en",
+            "UAG_GROQ_STT_LANGUAGE": "en",
+            "UAG_GROQ_STT_PROMPT": (
+                "The audio is spoken in English. Transcribe it accurately in English."
+            ),
             "VOICE_AGENT_VAD_START_RMS": "350",
             "VOICE_AGENT_VAD_CONTINUE_RMS": "240",
             "VOICE_AGENT_VAD_START_MS": "80",
-            "VOICE_AGENT_VAD_END_SILENCE_MS": "600",
+            "VOICE_AGENT_VAD_END_SILENCE_MS": "1200",
             "VOICE_AGENT_VAD_MIN_UTTERANCE_MS": "250",
             "VOICE_AGENT_VAD_PRE_ROLL_MS": "200",
             "VOICE_AGENT_AUDIO_SAMPLE_RATE": "48000",
             "VOICE_AGENT_AUDIO_CHANNELS": "1",
             "VOICE_AGENT_SYSTEM_PROMPT": (
-                "You are a helpful general voice assistant. Be concise, truthful, "
-                "and disclose that you are automated."
+                "Always reply in English. Be concise, truthful, and do not introduce yourself."
             ),
-            "EDGE_TTS_VOICE": "fa-IR-DilaraNeural",
+            "EDGE_TTS_VOICE": "en-US-AndrewMultilingualNeural",
             "EDGE_TTS_RATE": "+0%",
             "FFMPEG_BIN": "ffmpeg",
         }
