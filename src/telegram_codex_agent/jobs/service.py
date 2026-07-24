@@ -6,6 +6,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_codex_agent.codex_fast import preference_enabled
 from telegram_codex_agent.db.models import (
     Chat,
     CodexThread,
@@ -97,6 +98,13 @@ class JobService:
                     "codex_model": str(user.preferences_json.get("codex_model", "")),
                     "codex_reasoning_effort": str(
                         user.preferences_json.get("codex_reasoning_effort", "")
+                    ),
+                    "codex_service_tier": (
+                        str(user.preferences_json.get("codex_service_tier", ""))
+                        if preference_enabled(
+                            user.preferences_json.get("codex_fast_mode", False)
+                        )
+                        else ""
                     ),
                     "response_language": str(user.preferences_json.get("response_language", "")),
                     "input_language": str(user.preferences_json.get("input_language", "")),

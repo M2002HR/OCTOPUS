@@ -284,6 +284,17 @@ class Worker:
             on_event=event,
             approval_decider=lambda method, params: self._decide_approval(job_id, method, params),
         ) as codex:
+            if codex_config.service_tier:
+                await self._event(
+                    job_id,
+                    "codex.fast_mode",
+                    "Codex Fast mode enabled",
+                    {"service_tier": codex_config.service_tier},
+                )
+                await self._deliver_progress(
+                    job_id,
+                    "⚡ Codex Fast mode is active for this task.",
+                )
             saved_thread = await self._resumable_thread(job_id)
             if saved_thread is not None:
                 try:
@@ -561,11 +572,15 @@ class Worker:
             metadata = job.metadata_json if job else {}
             requested_model = str(metadata.get("codex_model", "")).strip()
             requested_effort = str(metadata.get("codex_reasoning_effort", "")).strip()
+            requested_service_tier = str(metadata.get("codex_service_tier", "")).strip()
             requested_sandbox = str(metadata.get("sandbox_mode", "")).strip()
             requested_approval = str(metadata.get("approval_policy", "")).strip()
             updates: dict[str, object] = {
                 "model": requested_model or self.settings.codex.model,
                 "reasoning_effort": requested_effort or self.settings.codex.reasoning_effort,
+                # The job snapshot is authoritative, including an explicit
+                # empty value when the user selected Standard mode.
+                "service_tier": requested_service_tier or None,
             }
             if requested_sandbox in {"read-only", "workspace-write", "danger-full-access"}:
                 updates["sandbox_mode"] = requested_sandbox

@@ -40,6 +40,9 @@ codex:
   binary: ${CODEX_BINARY:-codex}
   model: ${CODEX_MODEL:-gpt-5.6-terra}
   reasoning_effort: ${CODEX_REASONING_EFFORT:-high}
+  # Per-user Telegram `/fast` preferences override this with the catalog's
+  # Fast service-tier id for each queued job.
+  service_tier:
   approval_policy: ${CODEX_APPROVAL_POLICY:-never}
   sandbox_mode: ${CODEX_SANDBOX_MODE:-danger-full-access}
   network_access: ${CODEX_NETWORK_ACCESS:-true}

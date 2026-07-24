@@ -18,6 +18,11 @@ shows the values that the next job will snapshot.
 Language selection applies to both voice-note transcription and AI responses.
 English is the default. Model and reasoning selections are sent as explicit
 `turn/start` overrides, including when an existing Codex thread is resumed.
+Fast mode is also a per-user preference. `/fast` toggles it, while `/fast on`,
+`/fast off`, and `/fast status` provide explicit controls. Enabling it first
+checks the live Codex model catalog, then snapshots the advertised Fast tier
+onto the job and sends it to `thread/start`, `thread/resume`, and `turn/start`.
+The currently installed GPT-5.6 catalog advertises this tier as `priority`.
 At log level `info` or `debug`, public Codex commentary is forwarded to
 Telegram; private reasoning events are never forwarded.
 

@@ -151,15 +151,18 @@ class CodexAppServer:
 
     async def start_thread(self, cwd: Path | str, *, ephemeral: bool = False) -> CodexThreadHandle:
         absolute_cwd = str(Path(cwd).resolve())
+        params: Json = {
+            "cwd": absolute_cwd,
+            "model": self.config.model,
+            "approvalPolicy": self.config.approval_policy,
+            "sandbox": self.config.sandbox_mode,
+            "ephemeral": ephemeral,
+        }
+        if self.config.service_tier:
+            params["serviceTier"] = self.config.service_tier
         result = await self.request(
             "thread/start",
-            {
-                "cwd": absolute_cwd,
-                "model": self.config.model,
-                "approvalPolicy": self.config.approval_policy,
-                "sandbox": self.config.sandbox_mode,
-                "ephemeral": ephemeral,
-            },
+            params,
             timeout=self.config.startup_timeout_seconds,
         )
         thread = result.get("thread", {})
@@ -171,15 +174,18 @@ class CodexAppServer:
     async def resume_thread(self, thread_id: str, cwd: Path | str) -> CodexThreadHandle:
         """Resume a persisted App Server thread in its registered workspace."""
         absolute_cwd = str(Path(cwd).resolve())
+        params: Json = {
+            "threadId": thread_id,
+            "cwd": absolute_cwd,
+            "model": self.config.model,
+            "approvalPolicy": self.config.approval_policy,
+            "sandbox": self.config.sandbox_mode,
+        }
+        if self.config.service_tier:
+            params["serviceTier"] = self.config.service_tier
         result = await self.request(
             "thread/resume",
-            {
-                "threadId": thread_id,
-                "cwd": absolute_cwd,
-                "model": self.config.model,
-                "approvalPolicy": self.config.approval_policy,
-                "sandbox": self.config.sandbox_mode,
-            },
+            params,
             timeout=self.config.startup_timeout_seconds,
         )
         thread = result.get("thread", {})
@@ -210,6 +216,8 @@ class CodexAppServer:
             "model": self.config.model,
             "cwd": thread.cwd,
         }
+        if self.config.service_tier:
+            params["serviceTier"] = self.config.service_tier
         if output_schema is not None:
             params["outputSchema"] = output_schema
         result = await self.request("turn/start", params, timeout=self.config.startup_timeout_seconds)
@@ -244,8 +252,9 @@ class CodexAppServer:
 
     async def _read_stdout(self) -> None:
         assert self.process and self.process.stdout
+        stdout = self.process.stdout
         try:
-            while line := await self.process.stdout.readline():
+            while line := await stdout.readline():
                 try:
                     message = json.loads(line)
                 except json.JSONDecodeError:
@@ -259,8 +268,9 @@ class CodexAppServer:
 
     async def _read_stderr(self) -> None:
         assert self.process and self.process.stderr
+        stderr = self.process.stderr
         try:
-            while line := await self.process.stderr.readline():
+            while line := await stderr.readline():
                 logger.debug("codex app server", extra={"line": line.decode(errors="replace").rstrip()})
         except asyncio.CancelledError:
             raise

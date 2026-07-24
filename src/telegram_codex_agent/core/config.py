@@ -99,6 +99,7 @@ class CodexConfig(BaseModel):
     binary: str = "codex"
     model: str = "gpt-5.6-terra"
     reasoning_effort: str = "high"
+    service_tier: str | None = None
     approval_policy: Literal["never", "on-request", "untrusted"] = "never"
     sandbox_mode: Literal["read-only", "workspace-write", "danger-full-access"] = (
         "danger-full-access"

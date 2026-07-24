@@ -12,6 +12,11 @@ from redis.asyncio import Redis, from_url
 from sqlalchemy import text
 
 from telegram_codex_agent.api.app import HealthRegistry
+from telegram_codex_agent.codex_fast import (
+    fast_service_tier,
+    model_catalog_has_data,
+    preference_enabled,
+)
 from telegram_codex_agent.codex_usage import format_codex_account_limits
 from telegram_codex_agent.core.config import Settings, load_settings
 from telegram_codex_agent.db.session import create_engine, create_session_factory
@@ -27,7 +32,10 @@ from telegram_codex_agent.telegram.normalization import deterministic_inbox_path
 logger = logging.getLogger(__name__)
 _CODEX_LIMITS_CACHE_KEY = "telegram_codex_agent:codex:account_rate_limits:v1"
 _CODEX_LIMITS_LAST_KNOWN_KEY = f"{_CODEX_LIMITS_CACHE_KEY}:last_known"
+_CODEX_MODELS_CACHE_KEY = "telegram_codex_agent:codex:model_catalog:v1"
+_CODEX_MODELS_LAST_KNOWN_KEY = f"{_CODEX_MODELS_CACHE_KEY}:last_known"
 _codex_limits_lock = asyncio.Lock()
+_codex_models_lock = asyncio.Lock()
 
 
 def _decode_json_object(raw: object) -> dict[str, object] | None:
@@ -85,6 +93,69 @@ def format_account_limits(payload: object, settings: Settings, *, stale: bool) -
     if stale:
         result += "\nSnapshot: cached because the live Codex query failed"
     return result
+
+
+async def read_codex_model_catalog(
+    settings: Settings,
+    redis: Redis,
+) -> tuple[dict[str, object], bool]:
+    """Read the catalog used by Codex itself to expose Fast service tiers."""
+
+    async def cached(key: str) -> dict[str, object] | None:
+        return _decode_json_object(await redis.get(key))
+
+    fresh = await cached(_CODEX_MODELS_CACHE_KEY)
+    if fresh is not None:
+        return fresh, model_catalog_has_data(fresh)
+    async with _codex_models_lock:
+        fresh = await cached(_CODEX_MODELS_CACHE_KEY)
+        if fresh is not None:
+            return fresh, model_catalog_has_data(fresh)
+        try:
+            async with CodexAppServer(settings.codex) as codex:
+                payload = await codex.request(
+                    "model/list",
+                    {"includeHidden": True},
+                    timeout=max(60.0, settings.codex.startup_timeout_seconds),
+                )
+            encoded = json.dumps(payload, separators=(",", ":"))
+            await redis.set(_CODEX_MODELS_CACHE_KEY, encoded, ex=300)
+            await redis.set(_CODEX_MODELS_LAST_KNOWN_KEY, encoded, ex=86_400)
+            return payload, model_catalog_has_data(payload)
+        except Exception:
+            logger.warning("could not refresh Codex model catalog", exc_info=True)
+            last_known = await cached(_CODEX_MODELS_LAST_KNOWN_KEY)
+            return (last_known or {}), model_catalog_has_data(last_known)
+
+
+async def set_codex_model_preference(
+    settings: Settings,
+    jobs: JobService,
+    user_id: int,
+    chat_id: int,
+    model: str,
+) -> tuple[bool, str]:
+    """Persist a model and keep Fast only when that model advertises it."""
+
+    context = await jobs.active_context(user_id, chat_id)
+    preferences = context[0].preferences_json if context else {}
+    updates: dict[str, object] = {"codex_model": model}
+    note = ""
+    if preference_enabled(preferences.get("codex_fast_mode", False)):
+        catalog, available = await read_codex_model_catalog(settings, jobs.redis)
+        tier = fast_service_tier(catalog, model) if available else None
+        if tier:
+            updates["codex_service_tier"] = tier
+            note = " Fast mode remains enabled for this model."
+        else:
+            updates.update(
+                {
+                    "codex_fast_mode": False,
+                    "codex_service_tier": "",
+                }
+            )
+            note = " Fast mode was disabled because the new model does not advertise it."
+    return await jobs.set_user_preferences(user_id, updates), note
 
 
 def format_token_usage(raw: object) -> str:
@@ -237,6 +308,7 @@ async def run_bot() -> None:
                 "nav:usage": "/usage",
                 "nav:model": "/model",
                 "nav:reasoning": "/reasoning",
+                "nav:fast": "/fast status",
                 "nav:language": "/language",
                 "nav:browser": "/browser",
                 "nav:review": "/review_menu",
@@ -258,6 +330,8 @@ async def run_bot() -> None:
                 text = f"/config model {text.removeprefix('config:model:')}"
             if text.startswith("config:effort:"):
                 text = f"/config effort {text.removeprefix('config:effort:')}"
+            if text.startswith("config:fast:"):
+                text = f"/fast {text.removeprefix('config:fast:')}"
             if text.startswith("config:language:"):
                 text = f"/config language {text.removeprefix('config:language:')}"
             if text.startswith("logs:level:"):
@@ -292,6 +366,7 @@ async def run_bot() -> None:
                     "/resume — continue an existing Codex thread\n"
                     "/status — workspace, model, latest job and session tokens\n"
                     "/usage — Codex account weekly limit and reset time\n"
+                    "/fast — toggle the current Codex Fast service tier\n"
                     "/history — active session prompts, results and logs\n"
                     "/permissions — Read Only / Workspace / Full Access\n"
                     "/model and /reasoning — execution model controls\n"
@@ -365,6 +440,7 @@ async def run_bot() -> None:
                     settings,
                     jobs.redis,
                 )
+                fast_mode = preference_enabled(preferences.get("codex_fast_mode", False))
                 latest_job = "none"
                 if current and current["latest_job_state"]:
                     latest_job = str(current["latest_job_state"])
@@ -374,6 +450,7 @@ async def run_bot() -> None:
                     "Octopus status: ONLINE\n"
                     f"Codex model: {preferences.get('codex_model') or settings.codex.model}\n"
                     f"Reasoning: {preferences.get('codex_reasoning_effort') or settings.codex.reasoning_effort}\n"
+                    f"Fast mode: {'ON' if fast_mode else 'OFF'}\n"
                     f"Language: {preferences.get('response_language') or settings.app.language}\n"
                     f"Permissions: {preferences.get('sandbox_mode') or settings.codex.sandbox_mode}\n"
                     f"Live logs: {preferences.get('log_level') or 'info'}\n"
@@ -386,6 +463,7 @@ async def run_bot() -> None:
                     [
                         [("💬 Sessions", "nav:sessions"), ("📚 History", "nav:history")],
                         [("📈 Usage", "nav:usage"), ("🧾 Jobs", "nav:jobs")],
+                        [("⚡ Fast mode", "nav:fast")],
                         [("🔐 Permissions", "nav:permissions"), ("⚙️ Settings", "nav:settings")],
                     ],
                 )
@@ -625,10 +703,74 @@ async def run_bot() -> None:
                 model = text.split(maxsplit=2)[-1].strip()
                 if not model or not model.startswith("gpt-"):
                     return "Invalid model name."
+                saved, fast_note = await set_codex_model_preference(
+                    settings,
+                    jobs,
+                    user_id,
+                    chat.id,
+                    model,
+                )
                 return BotResponse(
-                    f"Codex model changed to {model}. It applies to new and resumed turns.",
+                    f"Codex model changed to {model}. It applies to new and resumed turns."
+                    f"{fast_note}",
                     [[("🤖 Model settings", "nav:model"), ("📊 Status", "nav:home_status")]],
-                ) if await jobs.set_user_preference(user_id, "codex_model", model) else "Send one task first so your account can be registered."
+                ) if saved else "Send one task first so your account can be registered."
+            if text == "/fast" or text.startswith("/fast "):
+                context = await jobs.active_context(user_id, chat.id)
+                preferences = context[0].preferences_json if context else {}
+                current = preference_enabled(preferences.get("codex_fast_mode", False))
+                argument = text.removeprefix("/fast").strip().casefold()
+                if argument == "status":
+                    return BotResponse(
+                        "Codex Fast mode\n"
+                        f"Current: {'ON' if current else 'OFF'}\n\n"
+                        "Fast runs supported models about 1.5x faster and consumes "
+                        "the Codex account limit at a higher rate.",
+                        [[
+                            (f"{'✓ ' if current else ''}⚡ On", "config:fast:on"),
+                            (f"{'✓ ' if not current else ''}Standard", "config:fast:off"),
+                        ],
+                         [("🤖 Model", "nav:model"), ("⚙️ Settings", "nav:settings")]],
+                    )
+                if argument not in {"", "on", "off"}:
+                    return "Use /fast, /fast on, /fast off, or /fast status."
+                enabled = not current if not argument else argument == "on"
+                tier = ""
+                if enabled:
+                    model = str(
+                        preferences.get("codex_model")
+                        or settings.codex.model
+                    )
+                    catalog, available = await read_codex_model_catalog(
+                        settings,
+                        jobs.redis,
+                    )
+                    if not available:
+                        return (
+                            "The Codex model catalog is temporarily unavailable, "
+                            "so Fast mode was not changed."
+                        )
+                    tier = fast_service_tier(catalog, model) or ""
+                    if not tier:
+                        return (
+                            f"Fast mode is not advertised for {model}. "
+                            "Choose a supported model in /model first."
+                        )
+                saved = await jobs.set_user_preferences(
+                    user_id,
+                    {
+                        "codex_fast_mode": enabled,
+                        "codex_service_tier": tier,
+                    },
+                )
+                if not saved:
+                    return "Send one task first so your account can be registered."
+                label = "enabled" if enabled else "disabled"
+                return BotResponse(
+                    f"Codex Fast mode {label}. "
+                    f"{'Future tasks will use the Fast service tier.' if enabled else 'Future tasks will use Standard speed.'}",
+                    [[("⚡ Fast settings", "nav:fast"), ("📊 Status", "nav:home_status")]],
+                )
             if text == "/config":
                 context = await jobs.active_context(user_id, chat.id)
                 preferences = context[0].preferences_json if context else {}
@@ -636,11 +778,12 @@ async def run_bot() -> None:
                     "Octopus / Codex settings:\n"
                     f"Model: {preferences.get('codex_model') or settings.codex.model}\n"
                     f"Reasoning: {preferences.get('codex_reasoning_effort') or settings.codex.reasoning_effort}\n"
+                    f"Fast mode: {'ON' if preference_enabled(preferences.get('codex_fast_mode', False)) else 'OFF'}\n"
                     f"Response language: {preferences.get('response_language') or settings.app.language}\n"
                     f"Permissions: {preferences.get('sandbox_mode') or settings.codex.sandbox_mode}\n"
                     f"Live logs: {preferences.get('log_level') or 'info'}",
                     [[("🤖 Model", "nav:model"), ("🧠 Reasoning", "nav:reasoning")],
-                     [("🌐 Language", "nav:language")],
+                     [("⚡ Fast mode", "nav:fast"), ("🌐 Language", "nav:language")],
                      [("🔐 Permissions", "nav:permissions"), ("📜 Logs", "nav:logs")],
                      [("🏠 Home", "nav:home")]],
                 )
@@ -648,10 +791,18 @@ async def run_bot() -> None:
                 model = text.removeprefix("/config model ").strip()
                 if not model.startswith("gpt-"):
                     return "Invalid model name."
+                saved, fast_note = await set_codex_model_preference(
+                    settings,
+                    jobs,
+                    user_id,
+                    chat.id,
+                    model,
+                )
                 return BotResponse(
-                    f"Codex model changed to {model}. It applies to new and resumed turns.",
+                    f"Codex model changed to {model}. It applies to new and resumed turns."
+                    f"{fast_note}",
                     [[("🤖 Model settings", "nav:model"), ("📊 Status", "nav:home_status")]],
-                ) if await jobs.set_user_preference(user_id, "codex_model", model) else "Send one task first."
+                ) if saved else "Send one task first."
             if text.startswith("/config effort ") or text.startswith("/reasoning "):
                 effort = text.split()[-1].strip().casefold()
                 if effort not in {"low", "medium", "high", "xhigh", "max", "ultra"}:

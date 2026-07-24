@@ -20,6 +20,8 @@ The Bot control center mirrors the core Codex CLI workflow:
 - `/new` creates a fresh Codex conversation in the selected workspace.
 - `/resume` lists saved threads and resumes the selected App Server thread.
 - `/status`, `/permissions`, `/model`, and `/reasoning` expose the active execution context.
+- `/fast`, `/fast on`, `/fast off`, and `/fast status` control the catalog-backed
+  Codex Fast service tier for future jobs; the same control is available in Settings.
 - `/status` includes the selected thread's live state, persisted token/context usage,
   and the current Codex account quota.
 - `/history` shows the active session's prompts, results, and paginated durable job logs.

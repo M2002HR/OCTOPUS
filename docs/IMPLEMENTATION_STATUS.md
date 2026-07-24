@@ -30,4 +30,5 @@ Evidence is recorded here rather than inferred from design documents.
 - [x] Live level-controlled Codex lifecycle/activity streaming and verified Telegram screenshot/artifact delivery
 - [x] Runtime model/reasoning/language selectors and safe public Codex commentary streaming
 - [x] Codex-style status usage, explicit running/idle session states, scoped session history, and paginated durable logs
+- [x] Catalog-backed `/fast` toggle and Settings control, persisted per user and applied to Codex thread/turn requests
 - [x] Redis pending-message recovery coordinated with PostgreSQL leases, plus Codex-driven Chrome Lab/browser verification and artifact handoff
