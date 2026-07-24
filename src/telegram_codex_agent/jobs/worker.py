@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import socket
 from pathlib import Path
@@ -118,6 +119,16 @@ class Worker:
                 if not project_path.is_dir():
                     raise ValueError("selected project root is unavailable on this host")
             await self._transition(session, job, JobState.MEMORY_RETRIEVAL, "retrieving relevant memory")
+            if str(job.metadata_json.get("attachment_kind", "")) == "voice":
+                await self._transition(session, job, JobState.WAITING_EXTERNAL, "transcribing voice attachment")
+                job.objective = await self._transcribe_attachment(job)
+                await self._event_in_session(
+                    session,
+                    job.id,
+                    "attachment.voice.transcribed",
+                    "voice attachment transcribed",
+                    {"chars": len(job.objective)},
+                )
             conversation = await session.get(Conversation, job.conversation_id)
             if conversation is not None and self.settings.memory.enabled:
                 memories = await MemoryService(self.sessions).retrieve(
@@ -155,8 +166,20 @@ class Worker:
     async def _execute_chat(self, job_id: str) -> str:
         objective = await self._objective(job_id)
         language = await self._response_language(job_id)
+        attachment = await self._attachment_metadata(job_id)
         client = AjilClient(self.settings.ajil)
         try:
+            user_content: object = objective
+            if attachment.get("attachment_kind") == "photo":
+                image_path = Path(str(attachment.get("attachment_path", "")))
+                if not image_path.is_file():
+                    raise RuntimeError("photo attachment is no longer available")
+                encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+                mime_type = str(attachment.get("attachment_mime_type") or "image/jpeg")
+                user_content = [
+                    {"type": "text", "text": objective},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}},
+                ]
             response = await client.chat(
                 [
                     {
@@ -167,7 +190,7 @@ class Worker:
                             else "You are a helpful assistant. Reply in Persian unless the user asks for another language."
                         ),
                     },
-                    {"role": "user", "content": objective},
+                    {"role": "user", "content": user_content},
                 ]
             )
             return client._content(response.data)
@@ -343,6 +366,26 @@ class Worker:
             if job is None:
                 raise KeyError(job_id)
             return job.objective
+
+    async def _attachment_metadata(self, job_id: str) -> dict[str, object]:
+        async with self.sessions() as session:
+            job = await session.get(Job, job_id)
+            return dict(job.metadata_json) if job else {}
+
+    async def _transcribe_attachment(self, job: Job) -> str:
+        path = Path(str(job.metadata_json.get("attachment_path", ""))).resolve()
+        artifact_root = Path(self.settings.artifacts.root).resolve()
+        if not path.is_file() or not path.is_relative_to(artifact_root):
+            raise RuntimeError("voice attachment path is unavailable or outside the artifact root")
+        client = AjilClient(self.settings.ajil)
+        try:
+            response = await client.transcribe(path, language=self.settings.voice.stt_language)
+            transcript = str(response.data.get("text", "")).strip()
+            if not transcript:
+                raise RuntimeError("transcription returned no text")
+            return transcript
+        finally:
+            await client.aclose()
 
     async def _codex_config(self, job_id: str) -> CodexConfig:
         async with self.sessions() as session:

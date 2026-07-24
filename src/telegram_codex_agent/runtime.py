@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from pathlib import Path
+from typing import Any
 
 from redis.asyncio import from_url
 from sqlalchemy import text
@@ -16,8 +18,69 @@ from telegram_codex_agent.jobs.worker import Worker
 from telegram_codex_agent.memory import MemoryService
 from telegram_codex_agent.projects import ProjectRegistry
 from telegram_codex_agent.telegram.bot import TelegramBotService
+from telegram_codex_agent.telegram.normalization import deterministic_inbox_path, sha256_file
 
 logger = logging.getLogger(__name__)
+
+
+async def extract_bot_media(message: object, settings: Settings) -> tuple[str, str, dict[str, object]]:
+    """Download one Telegram attachment into the managed artifact inbox.
+
+    The job stores only a local, content-addressed record.  Telegram file IDs
+    and raw bytes never appear in a status message or in an LLM prompt.
+    """
+    media_kind = ""
+    media: Any = None
+    mime_type = "application/octet-stream"
+    for kind in ("voice", "photo", "document", "video"):
+        candidate = getattr(message, kind, None)
+        if candidate:
+            media_kind, media = kind, candidate[-1] if kind == "photo" else candidate
+            mime_type = getattr(media, "mime_type", None) or (
+                "image/jpeg" if kind == "photo" else "audio/ogg" if kind == "voice" else mime_type
+            )
+            break
+    if not media_kind:
+        return "", "", {}
+    size = int(getattr(media, "file_size", 0) or 0)
+    if size > settings.artifacts.telegram_direct_upload_max_bytes:
+        raise ValueError("attachment exceeds the configured Telegram size limit")
+    unique_id = str(getattr(media, "file_unique_id", "") or "attachment")
+    filename = str(getattr(media, "file_name", "") or f"{media_kind}.bin")
+    if media_kind == "voice":
+        filename = "voice.ogg"
+    elif media_kind == "photo":
+        filename = "photo.jpg"
+    destination = deterministic_inbox_path(
+        Path(settings.artifacts.root).resolve() / "inbox",
+        file_unique_id=unique_id,
+        filename=filename,
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    bot = getattr(message, "bot", None)
+    if bot is None:
+        raise RuntimeError("Telegram Bot instance is unavailable for attachment download")
+    await bot.download(media, destination=destination)
+    if not destination.is_file() or destination.stat().st_size == 0:
+        raise RuntimeError("Telegram attachment download did not produce a file")
+    caption = str(getattr(message, "caption", "") or "").strip()
+    reply = getattr(message, "reply_to_message", None)
+    reply_text = str(getattr(reply, "text", "") or getattr(reply, "caption", "") or "").strip()
+    objective = caption or {
+        "voice": "Transcribe this voice message and answer it.",
+        "photo": "Analyze this image and describe its important details.",
+        "document": "Review the attached document and explain what it contains.",
+        "video": "Review the attached video and explain what it contains.",
+    }[media_kind]
+    if reply_text:
+        objective = f"[Reply context]\n{reply_text}\n\n[New request]\n{objective}"
+    return objective, media_kind, {
+        "attachment_kind": media_kind,
+        "attachment_path": str(destination),
+        "attachment_mime_type": mime_type,
+        "attachment_size_bytes": destination.stat().st_size,
+        "attachment_sha256": sha256_file(destination),
+    }
 
 
 async def run_bot() -> None:
@@ -129,7 +192,14 @@ async def run_bot() -> None:
                     return "شناسهٔ حافظه نامعتبر است."
                 memory_id = text.removeprefix("/forget ").strip()
                 return "حذف شد." if await memory.forget(context[0].id, memory_id) else "حافظه پیدا نشد."
-            job_id = await jobs.create_from_text(from_user.id, chat.id, text or "[media message]")
+            objective, content_type, metadata = await extract_bot_media(message, settings)
+            job_id = await jobs.create_from_text(
+                from_user.id,
+                chat.id,
+                objective or text or "[empty message]",
+                content_type=content_type or "text",
+                metadata=metadata,
+            )
             return f"درخواست ثبت شد و در حال پردازش است. شناسهٔ کار: {job_id}"
 
         service = TelegramBotService(settings, reply)

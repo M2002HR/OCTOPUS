@@ -26,7 +26,15 @@ class JobService:
         self.sessions = sessions
         self.queue = RedisStreamJobQueue(redis, stream, group)
 
-    async def create_from_text(self, telegram_user_id: int, telegram_chat_id: int, text: str) -> str:
+    async def create_from_text(
+        self,
+        telegram_user_id: int,
+        telegram_chat_id: int,
+        text: str,
+        *,
+        content_type: str = "text",
+        metadata: dict[str, object] | None = None,
+    ) -> str:
         async with self.sessions() as session:
             user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
             if user is None:
@@ -48,7 +56,13 @@ class JobService:
                 conversation = Conversation(user_id=user.id, chat_id=chat.id, title="Telegram conversation")
                 session.add(conversation)
                 await session.flush()
-            message = Message(conversation_id=conversation.id, role="user", content_type="text", text=text)
+            message = Message(
+                conversation_id=conversation.id,
+                role="user",
+                content_type=content_type,
+                text=text,
+                metadata_json=metadata or {},
+            )
             session.add(message)
             await session.flush()
             job = Job(
@@ -67,6 +81,7 @@ class JobService:
                     ),
                     "response_language": str(user.preferences_json.get("response_language", "")),
                     "stream_progress": bool(user.preferences_json.get("stream_progress", True)),
+                    **(metadata or {}),
                 },
             )
             session.add(job)

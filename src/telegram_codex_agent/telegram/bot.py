@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
 from aiogram import Bot, Dispatcher, Router
@@ -51,6 +51,26 @@ class HttpProxyAiohttpSession(AiohttpSession):
             status_code=response.status,
             content=raw_result,
         ).result
+
+    async def stream_content(
+        self,
+        url: str,
+        headers: dict[str, Any] | None = None,
+        timeout: int = 30,
+        chunk_size: int = 65_536,
+        raise_for_status: bool = True,
+    ) -> AsyncGenerator[bytes, None]:
+        """Proxy media downloads as well as ordinary Bot API requests."""
+        session = await self.create_session()
+        async with session.get(
+            url,
+            timeout=timeout,
+            headers=headers or {},
+            proxy=self.proxy_url,
+            raise_for_status=raise_for_status,
+        ) as response:
+            async for chunk in response.content.iter_chunked(chunk_size):
+                yield chunk
 
 
 class TelegramBotService:
