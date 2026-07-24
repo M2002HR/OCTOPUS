@@ -20,6 +20,7 @@ from telethon.tl import types
 from voice_agent.adapters.uag import UAGClient
 from voice_agent.config import Settings
 from voice_agent.domain import ChatMessage
+from voice_agent.english import fallback_reply, normalize_english_output
 from voice_agent.observability import Event
 from voice_agent.ports import SpeechSynthesizer
 from voice_agent.storage import AuditStore
@@ -27,12 +28,10 @@ from voice_agent.storage import AuditStore
 logger = logging.getLogger(__name__)
 
 MEDIA_DIRECTIVE = re.compile(r"\[\[send_media:([A-Za-z0-9_.-]+)\]\]")
-TEXT_REQUEST = re.compile(r"(?:^/text\b|\b(?:متنی|متن بده|بدون ویس|ویس نده|text)\b)", re.I)
-VOICE_REQUEST = re.compile(r"(?:^/voice\b|\b(?:ویس|صوتی|voice)\b)", re.I)
+TEXT_REQUEST = re.compile(r"(?:^/text\b|\btext\b)", re.I)
+VOICE_REQUEST = re.compile(r"(?:^/voice\b|\bvoice\b)", re.I)
 VOICE_DELIVERY_REFUSAL = re.compile(
-    r"(?:نمی\s*توانم|نمی\s*تونم).{0,48}(?:ویس|صوت|پاسخ صوتی)"
-    r"|امکان.{0,48}(?:ویس|صوت|پاسخ صوتی).{0,48}ندارم"
-    r"|(?:can(?:not|'t)|unable\s+to).{0,48}(?:send|provide|make).{0,24}voice",
+    r"(?:can(?:not|'t)|unable\s+to).{0,48}(?:send|provide|make).{0,24}voice",
     re.I,
 )
 
@@ -219,7 +218,7 @@ class MessageAssistant:
             )
             await self.client.send_message(
                 self.allowed_peer_id,
-                "متأسفم، پردازش این پیام با خطا روبه‌رو شد. لطفاً دوباره تلاش کنید.",
+                "Sorry, I could not process that message. Please try again.",
             )
         finally:
             for path in (
@@ -262,7 +261,7 @@ class MessageAssistant:
         if size > self.settings.message_max_media_bytes:
             await self.client.send_message(
                 self.allowed_peer_id,
-                "حجم فایل بیشتر از حد مجاز دستیار است.",
+                "That file exceeds the assistant's size limit.",
             )
             self.audit.append(
                 Event("message.rejected", trace_id, conversation_id, details={"reason": "size"})
@@ -317,7 +316,9 @@ class MessageAssistant:
             )
         text = (message.message or "").strip()
         if not text:
-            await self.client.send_message(self.allowed_peer_id, "لطفاً متن، ویس یا تصویر بفرستید.")
+            await self.client.send_message(
+                self.allowed_peer_id, "Please send text, voice, or an image."
+            )
             return None
         return MessageContent(kind="text", text=text)
 
@@ -423,10 +424,10 @@ class MessageAssistant:
     def _response_mode(self, text: str) -> tuple[ResponseMode, str]:
         if TEXT_REQUEST.search(text):
             clean = re.sub(r"^/(?:text)\s*", "", text, flags=re.I).strip()
-            return ResponseMode.TEXT, clean or "لطفاً به این پیام به‌صورت متن پاسخ بده."
+            return ResponseMode.TEXT, clean or "Reply to this message as text."
         if VOICE_REQUEST.search(text):
             clean = re.sub(r"^/(?:voice)\s*", "", text, flags=re.I).strip()
-            return ResponseMode.VOICE, clean or "لطفاً به این پیام به‌صورت صوتی پاسخ بده."
+            return ResponseMode.VOICE, clean or "Reply to this message as voice."
         return ResponseMode(self.settings.message_default_response), text
 
     async def _reply(
@@ -442,12 +443,31 @@ class MessageAssistant:
         history[:] = history[-self.settings.max_history_messages :]
         system_prompt = self._message_system_prompt()
         self.audit.append(Event("message.ai.started", trace_id, conversation_id))
-        raw_reply = await self._ask_model(
-            history=history,
-            system_prompt=system_prompt,
-            input_text=input_text,
-            image_paths=image_paths,
+        raw_reply = normalize_english_output(
+            await self._ask_model(
+                history=history,
+                system_prompt=system_prompt,
+                input_text=input_text,
+                image_paths=image_paths,
+            )
         )
+        if raw_reply is None:
+            self.audit.append(Event("message.ai.rejected_non_english", trace_id, conversation_id))
+            self.audit.append(Event("message.ai.english_retry", trace_id, conversation_id))
+            raw_reply = normalize_english_output(
+                await self._ask_model(
+                    history=history,
+                    system_prompt=(
+                        f"{system_prompt}\n\n"
+                        "Translate or answer the user's request in English only. "
+                        "Your entire response must use ASCII English text."
+                    ),
+                    input_text=input_text,
+                    image_paths=image_paths,
+                )
+            )
+            if raw_reply is None:
+                raw_reply = fallback_reply()
         if response_mode is ResponseMode.VOICE and self._is_voice_delivery_refusal(raw_reply):
             self.audit.append(Event("message.ai.voice_delivery_retry", trace_id, conversation_id))
             raw_reply = await self._ask_model(
@@ -504,8 +524,8 @@ class MessageAssistant:
     def _message_system_prompt(self) -> str:
         return (
             f"{self.settings.system_prompt}\n\n"
-            "Reply in the same language as the user's latest message unless they explicitly ask "
-            "for another language. Write naturally and directly, as in an ordinary private chat. "
+            "Always reply in English, regardless of the language used in the incoming message. "
+            "Write naturally and directly, as in an ordinary private chat. "
             "Do not volunteer a persona, implementation details, or that you are an assistant/bot. "
             "If asked directly about your identity, answer truthfully. Keep answers concise. "
             "Quoted voice messages are already transcribed into plain text before you receive "
@@ -525,7 +545,7 @@ class MessageAssistant:
         match = MEDIA_DIRECTIVE.search(reply)
         clean = MEDIA_DIRECTIVE.sub("", reply).strip()
         asset = self.library.assets().get(match.group(1)) if match else None
-        return clean or "انجام شد.", asset
+        return clean or "Done.", asset
 
     async def _deliver_reply(
         self, *, reply: str, mode: ResponseMode, trace_id: str, conversation_id: str

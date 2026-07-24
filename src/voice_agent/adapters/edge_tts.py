@@ -6,8 +6,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from voice_agent.language import language_hint
-
 
 class EdgeTTSError(RuntimeError):
     pass
@@ -15,12 +13,9 @@ class EdgeTTSError(RuntimeError):
 
 class EdgeSpeechSynthesizer:
     def __init__(
-        self, *, voice: str, voices_by_language: dict[str, str], rate: str, ffmpeg_bin: str
+        self, *, voice: str, rate: str, ffmpeg_bin: str
     ) -> None:
         self.voice = voice
-        self.voices_by_language = {
-            key.casefold(): value for key, value in voices_by_language.items()
-        }
         self.rate = rate
         self.ffmpeg_bin = ffmpeg_bin
 
@@ -45,8 +40,7 @@ class EdgeSpeechSynthesizer:
             mp3.unlink(missing_ok=True)
 
     def _voice_for(self, text: str, language: str | None) -> str:
-        hint = (language or language_hint(text) or "").casefold().split("-", 1)[0]
-        return self.voices_by_language.get(hint, self.voice)
+        return self.voice
 
     def _to_ogg_opus(self, source: Path, destination: Path) -> None:
         executable = shutil.which(self.ffmpeg_bin)
