@@ -13,4 +13,5 @@ data/
 *.session-journal
 *.db
 *.egg-info/
+build/
 vendor/Ajil_Unified_AI_Gateway/.env
