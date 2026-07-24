@@ -243,13 +243,13 @@ async def publish_completion_call(
     end
     return ''
     """
-    result = await redis.eval(
+    result = await redis.eval(  # type: ignore[misc]
         script,
         2,
         deduplication_key,
         config.stream,
-        config.queue_retention_seconds,
-        config.max_queue_length,
+        str(config.queue_retention_seconds),
+        str(config.max_queue_length),
         request.model_dump_json(),
     )
     return bool(result)

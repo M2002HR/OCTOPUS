@@ -116,7 +116,10 @@ async def main() -> None:
         await client.send_message(target, "/text Explain unit testing in one short sentence.")
         text_reply = await wait_for_reply("text", "explicit_text")
 
-        await client.send_message(target, "What is a regression test? Answer in one short sentence.")
+        await client.send_message(
+            target,
+            "What is a regression test? Answer in one short sentence.",
+        )
         await wait_for_reply("text", "default_text")
 
         await client.send_message(target, "/voice Explain code review in one short sentence.")
@@ -142,7 +145,10 @@ async def main() -> None:
         blue_message = await client.send_file(
             target,
             blue_image,
-            caption="Analyze this image. What is its dominant color? Reply in one English sentence.",
+            caption=(
+                "Analyze this image. What is its dominant color? "
+                "Reply in one English sentence."
+            ),
         )
         await wait_for_reply("text", "image_analysis")
 
@@ -175,7 +181,12 @@ async def main() -> None:
         )
         await wait_for_reply("text", "reply_to_image")
 
-        summary = {"event": "tester.messages.completed", "run_id": run_id, "results": results, "timestamp": time()}
+        summary = {
+            "event": "tester.messages.completed",
+            "run_id": run_id,
+            "results": results,
+            "timestamp": time(),
+        }
         runtime.mkdir(parents=True, exist_ok=True)
         (runtime / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(json.dumps(summary, ensure_ascii=True))

@@ -33,7 +33,10 @@ class CompletionCallConsumer:
         handler: CompletionCallHandler,
         redis: Redis | None = None,
     ) -> None:
-        self.redis = redis or from_url(redis_url, decode_responses=True)
+        self.redis = redis or from_url(  # type: ignore[no-untyped-call]
+            redis_url,
+            decode_responses=True,
+        )
         self._owns_redis = redis is None
         self.stream = stream
         self.consumer_group = consumer_group
