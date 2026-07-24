@@ -14,11 +14,15 @@ RUN HTTP_PROXY="${HTTP_PROXY}" HTTPS_PROXY="${HTTPS_PROXY}" ALL_PROXY="${ALL_PRO
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md /app/
-COPY src /app/src
-COPY scripts/container_entrypoint.py scripts/media_overlay_stun_probe.py /app/scripts/
-RUN if [ -n "${PIP_INDEX_URL}" ]; then pip config set global.index-url "${PIP_INDEX_URL}"; fi \
+RUN mkdir -p /app/src \
+    && if [ -n "${PIP_INDEX_URL}" ]; then pip config set global.index-url "${PIP_INDEX_URL}"; fi \
     && if [ -n "${PIP_EXTRA_INDEX_URL}" ]; then pip config set global.extra-index-url "${PIP_EXTRA_INDEX_URL}"; fi \
     && HTTP_PROXY="${HTTP_PROXY}" HTTPS_PROXY="${HTTPS_PROXY}" ALL_PROXY="${ALL_PROXY}" NO_PROXY="${NO_PROXY}" pip install --timeout 120 --no-cache-dir .
+
+COPY src /app/src
+RUN pip install --no-cache-dir --no-deps --force-reinstall .
+
+COPY scripts/container_entrypoint.py scripts/media_overlay_stun_probe.py /app/scripts/
 
 RUN useradd --create-home --uid 10001 voiceagent
 
