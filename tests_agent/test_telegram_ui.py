@@ -14,6 +14,7 @@ def test_command_menu_exposes_codex_session_and_browser_controls() -> None:
         "status",
         "usage",
         "history",
+        "completion_call",
         "permissions",
         "logs",
         "language",

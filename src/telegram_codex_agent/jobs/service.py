@@ -113,6 +113,13 @@ class JobService:
                     "sandbox_mode": str(user.preferences_json.get("sandbox_mode", "")),
                     "approval_policy": str(user.preferences_json.get("approval_policy", "")),
                     **(metadata or {}),
+                    "completion_call_enabled": preference_enabled(
+                        user.preferences_json.get("completion_call_enabled", False)
+                    ),
+                    # A Bot API user and the same person's Telethon account share
+                    # this numeric Telegram ID. The voice service still applies
+                    # its independent numeric allowlist before placing a call.
+                    "completion_call_target_user_id": telegram_user_id,
                 },
             )
             session.add(job)

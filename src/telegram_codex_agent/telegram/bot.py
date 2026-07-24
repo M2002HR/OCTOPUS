@@ -229,6 +229,7 @@ class TelegramBotService:
             BotCommand(command="model", description="Choose the Codex model"),
             BotCommand(command="reasoning", description="Choose reasoning effort"),
             BotCommand(command="fast", description="Toggle Codex Fast mode"),
+            BotCommand(command="completion_call", description="Call when Codex stops"),
             BotCommand(command="language", description="Choose input and response language"),
             BotCommand(command="browser", description="Browser checks and screenshots"),
             BotCommand(command="diff", description="Inspect uncommitted changes"),

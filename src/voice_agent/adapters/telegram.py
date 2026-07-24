@@ -72,6 +72,15 @@ class TelethonSession:
 
     async def resolve_allowed_user(self, username: str) -> TelegramPeer:
         entity = await self.client.get_entity(username)
+        return self._validated_peer(entity)
+
+    async def get_allowed_user(self, user_id: int) -> TelegramPeer:
+        if user_id not in self.allowed_peer_ids:
+            raise TelegramSafetyError("target is not in VOICE_AGENT_ALLOWED_PEER_IDS")
+        entity = await self.client.get_entity(user_id)
+        return self._validated_peer(entity)
+
+    def _validated_peer(self, entity: object) -> TelegramPeer:
         if not isinstance(entity, types.User) or entity.bot or entity.deleted:
             raise TelegramSafetyError("target must be an active, non-bot Telegram user")
         if entity.id not in self.allowed_peer_ids:

@@ -87,6 +87,9 @@ services:
       AUDIT_JSONL_PATH: /runtime/events.jsonl
       TELEGRAM_PROXY_HOST: ${TELEGRAM_PROXY_HOST_DOCKER:-host.docker.internal}
       TELEGRAM_PROXY_PORT: ${TELEGRAM_PROXY_PORT_DOCKER:-0}
+      # The existing Telethon owner consumes durable terminal notifications;
+      # no second client is allowed to open the same string session.
+      CODEX_COMPLETION_CALL_REDIS_URL: redis://redis:6379/1
     volumes:
       - ./runtime:/runtime
     depends_on:

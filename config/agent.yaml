@@ -65,6 +65,16 @@ voice:
   stt_language: en
   ffmpeg_binary: ${FFMPEG_BINARY:-ffmpeg}
   legacy_telethon_service: true
+  completion_calls:
+    enabled: ${CODEX_COMPLETION_CALLS_ENABLED:-true}
+    stream: ${CODEX_COMPLETION_CALL_STREAM:-telegram_codex_agent.completion_calls}
+    consumer_group: ${CODEX_COMPLETION_CALL_CONSUMER_GROUP:-voice_agent.completion_calls}
+    # The terminal message itself is generated once by Ajil; the call repeats
+    # that exact message three times before hanging up.
+    repeat_count: 3
+    max_message_characters: 240
+    queue_retention_seconds: 2592000
+    max_queue_length: 10000
 browser:
   default_mode: isolated_headless
   headless: ${PLAYWRIGHT_HEADLESS:-true}

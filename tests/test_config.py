@@ -104,3 +104,20 @@ def test_message_library_relative_paths_are_inside_runtime_volume(
 
     assert settings.message_media_library_dir == runtime / "approved-assets"
     assert settings.message_media_manifest == runtime / "approved-assets" / "index.json"
+
+
+def test_completion_call_settings_are_bounded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CODEX_COMPLETION_CALLS_ENABLED", "true")
+    monkeypatch.setenv(
+        "CODEX_COMPLETION_CALL_REDIS_URL",
+        "redis://redis:6379/1",
+    )
+    monkeypatch.setenv("CODEX_COMPLETION_CALL_RETRY_ATTEMPTS", "4")
+
+    settings = Settings.load(tmp_path / "missing.env")
+
+    assert settings.completion_calls_enabled is True
+    assert settings.completion_call_redis_url == "redis://redis:6379/1"
+    assert settings.completion_call_retry_attempts == 4

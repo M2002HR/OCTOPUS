@@ -5,10 +5,15 @@ import logging
 import shutil
 from pathlib import Path
 
+from telegram_codex_agent.completion_calls import (
+    CompletionCallRequest,
+    repeated_notification_text,
+)
 from voice_agent.adapters.edge_tts import EdgeSpeechSynthesizer
 from voice_agent.adapters.telegram import TelethonSession
 from voice_agent.adapters.uag import UAGClient
 from voice_agent.application import ConversationOrchestrator
+from voice_agent.completion_calls import CompletionCallConsumer
 from voice_agent.config import Settings
 from voice_agent.domain import AudioTurn, Call, CallState
 from voice_agent.messaging import MessageAssistant
@@ -55,6 +60,8 @@ class LiveVoiceAssistant:
             persist_transcripts=settings.recording_mode == "transcript_only",
         )
         self.engine: TelethonVoipEngine | None = None
+        self.notification_engine: TelethonVoipEngine | None = None
+        self.completion_call_consumer: CompletionCallConsumer | None = None
         self.inbound_server: IncomingCallServer | None = None
         self.message_assistant: MessageAssistant | None = None
         self.call: Call | None = None
@@ -62,6 +69,7 @@ class LiveVoiceAssistant:
         self._inbound_intro_path: Path | None = None
         self._inbound_intro_duration_ms = 0
         self._turn_lock = asyncio.Lock()
+        self._notification_lock = asyncio.Lock()
 
     async def place_test_call(self, username: str) -> Call:
         """Place one explicitly requested, allowlisted call and start the disclosed assistant."""
@@ -171,7 +179,124 @@ class LiveVoiceAssistant:
                 allowed_peer_id=message_peer.user_id,
             )
             await self.message_assistant.start()
+        if self.settings.completion_calls_enabled:
+            self.completion_call_consumer = CompletionCallConsumer(
+                redis_url=self.settings.completion_call_redis_url,
+                stream=self.settings.completion_call_stream,
+                consumer_group=self.settings.completion_call_consumer_group,
+                retry_attempts=self.settings.completion_call_retry_attempts,
+                retry_delay_seconds=self.settings.completion_call_retry_delay_seconds,
+                audit=self.audit,
+                handler=self._place_completion_call,
+            )
+            await self.completion_call_consumer.start()
         logger.info("inbound voice service is ready for the configured caller")
+
+    async def _place_completion_call(self, request: CompletionCallRequest) -> None:
+        """Call one allowlisted Bot user, repeat Ajil's message, then hang up."""
+
+        if self.inbound_server is None:
+            raise RuntimeError("voice service is not ready")
+        peer = await self.telegram.get_allowed_user(request.target_user_id)
+        output_dir = self.settings.runtime_dir / "completion-calls" / request.job_id
+        audio_path = output_dir / "notification.ogg"
+        repeated_text = repeated_notification_text(
+            request.message,
+            request.repeat_count,
+        )
+        try:
+            duration_ms = await self.orchestrator.synthesizer.synthesize(
+                repeated_text,
+                audio_path,
+                language="en",
+            )
+        except BaseException:
+            shutil.rmtree(output_dir, ignore_errors=True)
+            raise
+
+        async with self._notification_lock:
+            if self.call is not None or self.inbound_server.busy:
+                shutil.rmtree(output_dir, ignore_errors=True)
+                raise RuntimeError("voice service is busy with another call")
+            self.inbound_server.busy = True
+            notification_call = Call(
+                peer_id=peer.user_id,
+                peer_username=peer.username,
+            )
+            notification_call.transition(CallState.RINGING)
+
+            async def ignore_utterance(turn: AudioTurn) -> None:
+                turn.audio_path.unlink(missing_ok=True)
+
+            engine = TelethonVoipEngine(
+                telethon_client=self.telegram.client,
+                calls=self.inbound_server.calls,
+                audit=self.audit,
+                call_id=notification_call.id,
+                peer_id=peer.user_id,
+                vad_start_rms=self.settings.vad_start_rms,
+                vad_continue_rms=self.settings.vad_continue_rms,
+                vad_start_ms=self.settings.vad_start_ms,
+                vad_end_silence_ms=self.settings.vad_end_silence_ms,
+                vad_min_utterance_ms=self.settings.vad_min_utterance_ms,
+                vad_pre_roll_ms=self.settings.vad_pre_roll_ms,
+                max_turn_seconds=self.settings.max_turn_seconds,
+                call_timeout_seconds=self.settings.call_timeout_seconds,
+                sample_rate=self.settings.audio_sample_rate,
+                channels=self.settings.audio_channels,
+                language="en",
+                runtime_dir=self.settings.runtime_dir,
+                on_utterance=ignore_utterance,
+            )
+            self.notification_engine = engine
+            self.audit.append(
+                Event(
+                    "completion_call.requested",
+                    request.job_id,
+                    notification_call.id,
+                    details={
+                        "category": request.category,
+                        "repeat_count": request.repeat_count,
+                        "target_user_id": peer.user_id,
+                    },
+                )
+            )
+            try:
+                notification_call.transition(CallState.CONNECTING)
+                await engine.place_and_play(audio_path, duration_ms=duration_ms)
+                notification_call.transition(CallState.ACTIVE)
+                self.audit.append(
+                    Event(
+                        "completion_call.active",
+                        request.job_id,
+                        notification_call.id,
+                        details={
+                            "duration_ms": duration_ms,
+                            "target_user_id": peer.user_id,
+                        },
+                    )
+                )
+                playback_seconds = max(1.0, duration_ms / 1000)
+                await asyncio.sleep(
+                    playback_seconds
+                    + self.settings.completion_call_post_playback_seconds
+                )
+                notification_call.transition(CallState.ENDED)
+            except Exception:
+                if notification_call.state in {
+                    CallState.RINGING,
+                    CallState.CONNECTING,
+                    CallState.ACTIVE,
+                }:
+                    notification_call.transition(CallState.FAILED)
+                raise
+            finally:
+                try:
+                    await engine.hangup()
+                finally:
+                    self.notification_engine = None
+                    self.inbound_server.busy = False
+                    shutil.rmtree(output_dir, ignore_errors=True)
 
     async def _accept_incoming_call(self, peer_id: int, _: object) -> None:
         if self.inbound_server is None or self._inbound_intro_path is None:
@@ -272,10 +397,14 @@ class LiveVoiceAssistant:
         }:
             self.call.transition(CallState.ENDED)
         try:
+            if self.completion_call_consumer is not None:
+                await self.completion_call_consumer.stop()
             if self.message_assistant is not None:
                 await self.message_assistant.stop()
             if self.inbound_server is not None:
                 await self.inbound_server.stop()
+            if self.notification_engine is not None:
+                await self.notification_engine.hangup()
             if self.engine is not None:
                 await self.engine.hangup()
         finally:

@@ -124,12 +124,23 @@ class ArtifactConfig(BaseModel):
     telegram_direct_upload_max_bytes: int = 47_185_920
 
 
+class CompletionCallConfig(BaseModel):
+    enabled: bool = True
+    stream: str = "telegram_codex_agent.completion_calls"
+    consumer_group: str = "voice_agent.completion_calls"
+    repeat_count: int = Field(default=3, ge=3, le=3)
+    max_message_characters: int = Field(default=240, ge=80, le=500)
+    queue_retention_seconds: int = Field(default=2_592_000, ge=86_400)
+    max_queue_length: int = Field(default=10_000, ge=100)
+
+
 class VoiceConfig(BaseModel):
     enabled: bool = True
     telegram_voice_replies_default: bool = False
     stt_language: str = "en"
     ffmpeg_binary: str = "ffmpeg"
     legacy_telethon_service: bool = True
+    completion_calls: CompletionCallConfig = Field(default_factory=CompletionCallConfig)
 
 
 class BrowserConfig(BaseModel):

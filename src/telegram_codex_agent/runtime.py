@@ -309,6 +309,7 @@ async def run_bot() -> None:
                 "nav:model": "/model",
                 "nav:reasoning": "/reasoning",
                 "nav:fast": "/fast status",
+                "nav:completion_call": "/completion_call",
                 "nav:language": "/language",
                 "nav:browser": "/browser",
                 "nav:review": "/review_menu",
@@ -332,6 +333,11 @@ async def run_bot() -> None:
                 text = f"/config effort {text.removeprefix('config:effort:')}"
             if text.startswith("config:fast:"):
                 text = f"/fast {text.removeprefix('config:fast:')}"
+            if text.startswith("config:completion_call:"):
+                text = (
+                    "/completion_call "
+                    + text.removeprefix("config:completion_call:")
+                )
             if text.startswith("config:language:"):
                 text = f"/config language {text.removeprefix('config:language:')}"
             if text.startswith("logs:level:"):
@@ -367,6 +373,7 @@ async def run_bot() -> None:
                     "/status — workspace, model, latest job and session tokens\n"
                     "/usage — Codex account weekly limit and reset time\n"
                     "/fast — toggle the current Codex Fast service tier\n"
+                    "/completion_call — call this account when Codex stops\n"
                     "/history — active session prompts, results and logs\n"
                     "/permissions — Read Only / Workspace / Full Access\n"
                     "/model and /reasoning — execution model controls\n"
@@ -451,6 +458,7 @@ async def run_bot() -> None:
                     f"Codex model: {preferences.get('codex_model') or settings.codex.model}\n"
                     f"Reasoning: {preferences.get('codex_reasoning_effort') or settings.codex.reasoning_effort}\n"
                     f"Fast mode: {'ON' if fast_mode else 'OFF'}\n"
+                    f"Completion call: {'ON' if preference_enabled(preferences.get('completion_call_enabled', False)) else 'OFF'}\n"
                     f"Language: {preferences.get('response_language') or settings.app.language}\n"
                     f"Permissions: {preferences.get('sandbox_mode') or settings.codex.sandbox_mode}\n"
                     f"Live logs: {preferences.get('log_level') or 'info'}\n"
@@ -774,18 +782,68 @@ async def run_bot() -> None:
             if text == "/config":
                 context = await jobs.active_context(user_id, chat.id)
                 preferences = context[0].preferences_json if context else {}
+                completion_call_enabled = preference_enabled(
+                    preferences.get("completion_call_enabled", False)
+                )
                 return BotResponse(
                     "Octopus / Codex settings:\n"
                     f"Model: {preferences.get('codex_model') or settings.codex.model}\n"
                     f"Reasoning: {preferences.get('codex_reasoning_effort') or settings.codex.reasoning_effort}\n"
                     f"Fast mode: {'ON' if preference_enabled(preferences.get('codex_fast_mode', False)) else 'OFF'}\n"
+                    f"Completion call: {'ON' if completion_call_enabled else 'OFF'}\n"
                     f"Response language: {preferences.get('response_language') or settings.app.language}\n"
                     f"Permissions: {preferences.get('sandbox_mode') or settings.codex.sandbox_mode}\n"
                     f"Live logs: {preferences.get('log_level') or 'info'}",
                     [[("🤖 Model", "nav:model"), ("🧠 Reasoning", "nav:reasoning")],
                      [("⚡ Fast mode", "nav:fast"), ("🌐 Language", "nav:language")],
+                     [("📞 Completion call", "nav:completion_call")],
                      [("🔐 Permissions", "nav:permissions"), ("📜 Logs", "nav:logs")],
                      [("🏠 Home", "nav:home")]],
+                )
+            if text == "/completion_call":
+                context = await jobs.active_context(user_id, chat.id)
+                preferences = context[0].preferences_json if context else {}
+                enabled = preference_enabled(
+                    preferences.get("completion_call_enabled", False)
+                )
+                availability = settings.voice.completion_calls.enabled
+                return BotResponse(
+                    "Codex completion call\n"
+                    f"Current: {'ON' if enabled else 'OFF'}\n"
+                    f"Service availability: {'READY' if availability else 'DISABLED BY POLICY'}\n\n"
+                    "When enabled, the primary Telethon account calls this Telegram "
+                    "account after a Codex task succeeds, fails, is cancelled, is "
+                    "interrupted, times out, or reaches an account limit. Ajil writes "
+                    "one short status message; the call repeats it exactly three times "
+                    "and then hangs up.",
+                    [[
+                        (
+                            f"{'✓ ' if enabled else ''}📞 On",
+                            "config:completion_call:on",
+                        ),
+                        (
+                            f"{'✓ ' if not enabled else ''}Off",
+                            "config:completion_call:off",
+                        ),
+                    ],
+                     [("⚙️ Settings", "nav:settings"), ("📊 Status", "nav:home_status")]],
+                )
+            if text.startswith("/completion_call "):
+                value = text.removeprefix("/completion_call ").strip().casefold()
+                if value not in {"on", "off"}:
+                    return "Use /completion_call, /completion_call on, or /completion_call off."
+                if value == "on" and not settings.voice.completion_calls.enabled:
+                    return "Completion calls are disabled by the system policy."
+                saved = await jobs.set_user_preference(
+                    user_id,
+                    "completion_call_enabled",
+                    value == "on",
+                )
+                if not saved:
+                    return "Send one task first so your account can be registered."
+                return BotResponse(
+                    f"Codex completion calls are now {'enabled' if value == 'on' else 'disabled'}.",
+                    [[("📞 Completion call", "nav:completion_call"), ("⚙️ Settings", "nav:settings")]],
                 )
             if text.startswith("/config model "):
                 model = text.removeprefix("/config model ").strip()

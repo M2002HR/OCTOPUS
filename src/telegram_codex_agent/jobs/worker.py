@@ -7,12 +7,19 @@ import re
 import socket
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, cast
 
 from redis.asyncio import Redis, from_url
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from telegram_codex_agent.completion_calls import (
+    TerminalJobContext,
+    TerminalState,
+    build_completion_request,
+    generate_terminal_message,
+    publish_completion_call,
+)
 from telegram_codex_agent.core.config import CodexConfig, Settings
 from telegram_codex_agent.core.errors import AjilUnavailableError
 from telegram_codex_agent.db.models import (
@@ -96,10 +103,16 @@ class Worker:
                 JobState.CANCELLED.value,
                 JobState.INTERRUPTED.value,
             }:
+                # This also repairs the narrow crash window where a previous
+                # worker committed the terminal state but stopped before
+                # publishing the optional call. Redis-side deduplication makes
+                # the recovery path safe for already-published notifications.
+                await self._try_queue_completion_call(job_id)
                 return True
             if job.state == JobState.CANCEL_REQUESTED.value:
                 await self._transition(session, job, JobState.CANCELLED, "cancelled before execution")
                 await session.commit()
+                await self._try_queue_completion_call(job_id)
                 return True
             if job.state == JobState.RECEIVED.value:  # compatibility with jobs written before v0.2
                 await self._transition(session, job, JobState.NORMALIZING, "normalizing legacy request")
@@ -123,20 +136,26 @@ class Worker:
             await session.commit()
 
         try:
-            await self._deliver_progress(job_id, "📥 Job claimed by the Octopus worker.")
-            plan, conversation_id, project_path = await self._prepare(job_id)
-            await self._deliver_progress(
-                job_id,
-                f"🧭 Context resolved and execution plan selected: {plan.primary_executor.value}.",
-            )
-            content = await self._execute(job_id, plan, project_path)
-            await self._deliver_progress(job_id, "✅ Executor finished; persisting and delivering the result.")
-            await self._complete(job_id, conversation_id, content)
-        except _Cancelled:
-            await self._cancel(job_id, "cancelled while executing")
-        except Exception as exc:
-            logger.exception("job execution failed", extra={"job_id": job_id})
-            await self._fail(job_id, exc)
+            try:
+                await self._deliver_progress(job_id, "📥 Job claimed by the Octopus worker.")
+                plan, conversation_id, project_path = await self._prepare(job_id)
+                await self._deliver_progress(
+                    job_id,
+                    f"🧭 Context resolved and execution plan selected: {plan.primary_executor.value}.",
+                )
+                content = await self._execute(job_id, plan, project_path)
+                await self._deliver_progress(job_id, "✅ Executor finished; persisting and delivering the result.")
+                await self._complete(job_id, conversation_id, content)
+            except _Cancelled:
+                await self._cancel(job_id, "cancelled while executing")
+            except Exception as exc:
+                logger.exception("job execution failed", extra={"job_id": job_id})
+                await self._fail(job_id, exc)
+        finally:
+            # Completion calls are best-effort side effects of an authoritative
+            # terminal database state. A Telegram/Ajil outage must never change
+            # the task result or prevent the Redis job from being acknowledged.
+            await self._try_queue_completion_call(job_id)
         return True
 
     async def _prepare(self, job_id: str) -> tuple[ExecutionPlan, str, Path | None]:
@@ -520,6 +539,106 @@ class Worker:
                 telegram_chat_id,
                 f"The task could not be completed. Use /logs {job_id} for its safe lifecycle log.",
             )
+
+    async def _try_queue_completion_call(self, job_id: str) -> None:
+        try:
+            await self._queue_completion_call(job_id)
+        except Exception:
+            logger.exception(
+                "failed to enqueue Codex completion call",
+                extra={"job_id": job_id},
+            )
+            try:
+                await self._event(
+                    job_id,
+                    "completion_call.enqueue_failed",
+                    "Could not enqueue the optional Telegram completion call",
+                )
+            except Exception:
+                logger.exception(
+                    "failed to record completion-call enqueue error",
+                    extra={"job_id": job_id},
+                )
+
+    async def _queue_completion_call(self, job_id: str) -> None:
+        config = self.settings.voice.completion_calls
+        if not config.enabled:
+            return
+        async with self.sessions() as session:
+            job = await session.get(Job, job_id)
+            if job is None:
+                return
+            terminal_states = {
+                JobState.COMPLETED.value,
+                JobState.FAILED.value,
+                JobState.CANCELLED.value,
+                JobState.INTERRUPTED.value,
+            }
+            if job.state not in terminal_states:
+                return
+            metadata = dict(job.metadata_json)
+            if metadata.get("completion_call_enabled") is not True:
+                return
+            planned_executor = str(job.planner_output_json.get("primary_executor", ""))
+            intended_for_codex = (
+                planned_executor == ExecutionTarget.CODEX.value
+                or bool(job.codex_thread_id)
+                or (not job.planner_output_json and job.project_id is not None)
+            )
+            if not intended_for_codex:
+                return
+            try:
+                target_user_id = int(metadata.get("completion_call_target_user_id", 0))
+            except (TypeError, ValueError):
+                target_user_id = 0
+            if target_user_id <= 0:
+                await self._event_in_session(
+                    session,
+                    job.id,
+                    "completion_call.skipped",
+                    "Completion call target is missing",
+                )
+                await session.commit()
+                return
+            context = TerminalJobContext(
+                job_id=job.id,
+                state=cast(TerminalState, job.state),
+                objective=job.objective,
+                result_summary=job.result_summary,
+                error_code=job.error_code,
+                error_message=job.error_message,
+            )
+
+        client = AjilClient(self.settings.ajil)
+        try:
+            message, source = await generate_terminal_message(
+                client,
+                context,
+                maximum_characters=config.max_message_characters,
+            )
+        finally:
+            await client.aclose()
+        request = build_completion_request(
+            context,
+            target_user_id=target_user_id,
+            message=message,
+            repeat_count=config.repeat_count,
+        )
+        published = await publish_completion_call(self.redis, config, request)
+        await self._event(
+            job_id,
+            "completion_call.queued" if published else "completion_call.duplicate_suppressed",
+            (
+                "Telegram completion call queued"
+                if published
+                else "Duplicate Telegram completion call was suppressed"
+            ),
+            {
+                "category": context.category,
+                "message_source": source,
+                "repeat_count": config.repeat_count,
+            },
+        )
 
     async def _objective(self, job_id: str) -> str:
         async with self.sessions() as session:

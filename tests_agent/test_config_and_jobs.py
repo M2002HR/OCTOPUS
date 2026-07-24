@@ -19,6 +19,8 @@ def test_root_config_loads_from_single_yaml(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.codex.service_tier is None
     assert settings.app.language == "en"
     assert settings.voice.stt_language == "en"
+    assert settings.voice.completion_calls.enabled is True
+    assert settings.voice.completion_calls.repeat_count == 3
     assert settings.workspace.root == Path("/home/mhr/Code")
     assert settings.workspace.discover_git_projects is True
 

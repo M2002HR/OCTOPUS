@@ -98,6 +98,13 @@ class Settings:
     message_stt_language: str | None
     vision_models: tuple[str, ...]
     vision_providers: tuple[str, ...]
+    completion_calls_enabled: bool
+    completion_call_redis_url: str
+    completion_call_stream: str
+    completion_call_consumer_group: str
+    completion_call_retry_attempts: int
+    completion_call_retry_delay_seconds: int
+    completion_call_post_playback_seconds: int
 
     @classmethod
     def load(cls, env_file: Path | None = None) -> Settings:
@@ -220,6 +227,29 @@ class Settings:
             message_stt_language=message_stt_language,
             vision_models=csv("VOICE_AGENT_VISION_MODELS") or ("gemini/gemini-2.5-flash",),
             vision_providers=csv("VOICE_AGENT_VISION_PROVIDERS") or ("gemini",),
+            completion_calls_enabled=_bool("CODEX_COMPLETION_CALLS_ENABLED", True),
+            completion_call_redis_url=os.getenv(
+                "CODEX_COMPLETION_CALL_REDIS_URL", ""
+            ).strip(),
+            completion_call_stream=os.getenv(
+                "CODEX_COMPLETION_CALL_STREAM",
+                "telegram_codex_agent.completion_calls",
+            ).strip()
+            or "telegram_codex_agent.completion_calls",
+            completion_call_consumer_group=os.getenv(
+                "CODEX_COMPLETION_CALL_CONSUMER_GROUP",
+                "voice_agent.completion_calls",
+            ).strip()
+            or "voice_agent.completion_calls",
+            completion_call_retry_attempts=_int(
+                "CODEX_COMPLETION_CALL_RETRY_ATTEMPTS", 3, minimum=1
+            ),
+            completion_call_retry_delay_seconds=_int(
+                "CODEX_COMPLETION_CALL_RETRY_DELAY_SEC", 10, minimum=1
+            ),
+            completion_call_post_playback_seconds=_int(
+                "CODEX_COMPLETION_CALL_POST_PLAYBACK_SEC", 2, minimum=0
+            ),
         )
 
     def validate_telegram(self) -> None:
@@ -246,4 +276,8 @@ class Settings:
         if self.message_enabled and not self.message_username:
             raise ConfigurationError(
                 "VOICE_AGENT_MESSAGE_USERNAME is required when message service is enabled"
+            )
+        if self.completion_calls_enabled and not self.completion_call_redis_url:
+            raise ConfigurationError(
+                "CODEX_COMPLETION_CALL_REDIS_URL is required when completion calls are enabled"
             )
