@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-agent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agent_dev_password}
     ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -93,6 +93,136 @@ services:
       ajil_gateway:
         condition: service_healthy
     command: ["serve"]
+
+  # Persistent Telegram Codex platform. Its workspace path is explicit and
+  # never supplied by Telegram input; the legacy Telethon voice stack above is
+  # intentionally independent.
+  agent-migrate:
+    image: ${AGENT_IMAGE:-octopus-agent-platform:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      network: ${UAG_DOCKER_BUILD_NETWORK:-default}
+    profiles: ["agent"]
+    entrypoint: []
+    working_dir: /workspace/octopus
+    restart: "no"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agent_dev_password}@postgres:5432/${POSTGRES_DB:-telegram_codex_agent}
+      REDIS_URL: redis://redis:6379/1
+      AJIL_BASE_URL: http://ajil_gateway:8080
+      PROJECT_OCTOPUS_ROOT: /workspace/octopus
+      CODEX_HOME: /codex-home
+      CODEX_BINARY: /host-codex/bin/codex
+      PATH: /host-codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PYTHONPATH: /workspace/octopus/src
+    volumes:
+      - .:/workspace/octopus
+      - ${CODEX_HOME_HOST:-/home/mhr/.codex}:/codex-home
+      - ${CODEX_HOST_RUNTIME:-/home/mhr/.nvm/versions/node/v22.19.0}:/host-codex:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+
+  agent-api:
+    image: ${AGENT_IMAGE:-octopus-agent-platform:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      network: ${UAG_DOCKER_BUILD_NETWORK:-default}
+    profiles: ["agent"]
+    entrypoint: []
+    working_dir: /workspace/octopus
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agent_dev_password}@postgres:5432/${POSTGRES_DB:-telegram_codex_agent}
+      REDIS_URL: redis://redis:6379/1
+      AJIL_BASE_URL: http://ajil_gateway:8080
+      AGENT_API_HOST: 0.0.0.0
+      PROJECT_OCTOPUS_ROOT: /workspace/octopus
+      CODEX_HOME: /codex-home
+      CODEX_BINARY: /host-codex/bin/codex
+      PATH: /host-codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PYTHONPATH: /workspace/octopus/src
+    volumes:
+      - .:/workspace/octopus
+      - ${CODEX_HOME_HOST:-/home/mhr/.codex}:/codex-home
+      - ${CODEX_HOST_RUNTIME:-/home/mhr/.nvm/versions/node/v22.19.0}:/host-codex:ro
+    ports:
+      - "127.0.0.1:${AGENT_API_PORT:-18090}:18090"
+    depends_on:
+      agent-migrate:
+        condition: service_completed_successfully
+      ajil_gateway:
+        condition: service_healthy
+    command: ["python", "-m", "telegram_codex_agent.cli", "api"]
+
+  agent-worker:
+    image: ${AGENT_IMAGE:-octopus-agent-platform:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      network: ${UAG_DOCKER_BUILD_NETWORK:-default}
+    profiles: ["agent"]
+    entrypoint: []
+    working_dir: /workspace/octopus
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agent_dev_password}@postgres:5432/${POSTGRES_DB:-telegram_codex_agent}
+      REDIS_URL: redis://redis:6379/1
+      AJIL_BASE_URL: http://ajil_gateway:8080
+      PROJECT_OCTOPUS_ROOT: /workspace/octopus
+      CODEX_HOME: /codex-home
+      CODEX_BINARY: /host-codex/bin/codex
+      PATH: /host-codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PYTHONPATH: /workspace/octopus/src
+    volumes:
+      - .:/workspace/octopus
+      - ${CODEX_HOME_HOST:-/home/mhr/.codex}:/codex-home
+      - ${CODEX_HOST_RUNTIME:-/home/mhr/.nvm/versions/node/v22.19.0}:/host-codex:ro
+    depends_on:
+      agent-migrate:
+        condition: service_completed_successfully
+      ajil_gateway:
+        condition: service_healthy
+    command: ["python", "-m", "telegram_codex_agent.runtime", "worker"]
+
+  agent-bot:
+    image: ${AGENT_IMAGE:-octopus-agent-platform:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      network: ${UAG_DOCKER_BUILD_NETWORK:-default}
+    profiles: ["agent"]
+    entrypoint: []
+    working_dir: /workspace/octopus
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agent:${POSTGRES_PASSWORD:-agent_dev_password}@postgres:5432/${POSTGRES_DB:-telegram_codex_agent}
+      REDIS_URL: redis://redis:6379/1
+      AJIL_BASE_URL: http://ajil_gateway:8080
+      PROJECT_OCTOPUS_ROOT: /workspace/octopus
+      CODEX_HOME: /codex-home
+      CODEX_BINARY: /host-codex/bin/codex
+      PATH: /host-codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PYTHONPATH: /workspace/octopus/src
+    volumes:
+      - .:/workspace/octopus
+      - ${CODEX_HOME_HOST:-/home/mhr/.codex}:/codex-home
+      - ${CODEX_HOST_RUNTIME:-/home/mhr/.nvm/versions/node/v22.19.0}:/host-codex:ro
+    depends_on:
+      agent-migrate:
+        condition: service_completed_successfully
+      ajil_gateway:
+        condition: service_healthy
+    command: ["python", "-m", "telegram_codex_agent.runtime", "bot"]
 
   # The SSH transport is deliberately routed through the existing HTTP proxy
   # (host.docker.internal:32080 -> host port 3128). It exposes no host port.

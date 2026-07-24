@@ -1,0 +1,17 @@
+[Unit]
+Description=Telegram Codex Agent Bot
+After=network-online.target telegram-codex-agent-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+EnvironmentFile=@ROOT@/.env
+Environment=PYTHONPATH=@ROOT@/src
+ExecStart=/usr/bin/env python3 -m telegram_codex_agent.runtime bot
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

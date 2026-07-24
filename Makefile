@@ -2,7 +2,7 @@ SHELL := /bin/bash
 PYTHON ?= python3
 VENV ?= .venv
 
-.PHONY: help bootstrap submodules install config-validate infra-up infra-down infra-logs migrate dev api bot worker scheduler doctor ajil-smoke codex-smoke playwright-smoke telegram-smoke format lint typecheck test test-unit test-integration test-e2e coverage clean systemd-install systemd-start systemd-stop systemd-status
+.PHONY: help bootstrap submodules install config-validate infra-up infra-down infra-logs agent-up agent-down agent-logs agent-status migrate dev api bot worker scheduler doctor ajil-smoke codex-smoke playwright-smoke telegram-smoke format lint typecheck test test-unit test-integration test-e2e coverage clean systemd-install systemd-start systemd-stop systemd-status
 
 help:
 	@grep -E '^[a-zA-Z_-]+:' $(MAKEFILE_LIST) | cut -d: -f1 | sort
@@ -20,6 +20,14 @@ infra-down:
 	docker compose down
 infra-logs:
 	docker compose logs -f postgres redis ajil_gateway
+agent-up:
+	docker compose --profile agent up -d
+agent-down:
+	docker compose --profile agent stop agent-api agent-bot agent-worker
+agent-logs:
+	docker compose --profile agent logs -f agent-api agent-bot agent-worker
+agent-status:
+	docker compose --profile agent ps
 migrate:
 	PYTHONPATH=src alembic upgrade head
 dev:
@@ -37,7 +45,7 @@ doctor:
 ajil-smoke:
 	PYTHONPATH=src $(PYTHON) -m telegram_codex_agent.cli ajil-smoke
 codex-smoke:
-	PYTHONPATH=src $(PYTHON) -m telegram_codex_agent.cli codex status
+	PYTHONPATH=src $(PYTHON) -m telegram_codex_agent.cli codex smoke
 playwright-smoke:
 	$(PYTHON) -c 'import playwright; print("playwright package installed")'
 telegram-smoke:
