@@ -12,6 +12,9 @@ telegram:
   bot_token_env: TELEGRAM_BOT_TOKEN
   allowed_user_ids: []
   allowed_chat_ids: []
+  # Only these Telegram @usernames can use the Bot API control plane.
+  allowed_usernames:
+    - we_arew_waiting_for_him
   webhook_public_url: ${TELEGRAM_WEBHOOK_PUBLIC_URL:-}
   webhook_secret_env: TELEGRAM_WEBHOOK_SECRET
   default_parse_mode: HTML

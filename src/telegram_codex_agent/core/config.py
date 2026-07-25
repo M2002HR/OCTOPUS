@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from telegram_codex_agent.core.errors import ConfigurationError
 
@@ -48,12 +48,24 @@ class TelegramConfig(BaseModel):
     bot_token_env: str = "TELEGRAM_BOT_TOKEN"
     allowed_user_ids: list[int] = Field(default_factory=list)
     allowed_chat_ids: list[int] = Field(default_factory=list)
+    allowed_usernames: list[str] = Field(default_factory=list)
     webhook_public_url: str = ""
     webhook_secret_env: str = "TELEGRAM_WEBHOOK_SECRET"
     default_parse_mode: Literal["HTML", "MarkdownV2"] = "HTML"
     progress_edit_interval_seconds: float = 3.0
     max_message_length: int = 3800
     bot_proxy_url_env: str = "TELEGRAM_BOT_PROXY_URL"
+
+    @field_validator("allowed_usernames")
+    @classmethod
+    def normalize_allowed_usernames(cls, usernames: list[str]) -> list[str]:
+        """Store Telegram usernames in their canonical, case-insensitive form."""
+        normalized = [username.strip().removeprefix("@").casefold() for username in usernames]
+        if any(not username for username in normalized):
+            raise ValueError("telegram.allowed_usernames cannot contain empty usernames")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("telegram.allowed_usernames cannot contain duplicates")
+        return normalized
 
     @property
     def bot_token(self) -> str:

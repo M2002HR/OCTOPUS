@@ -34,7 +34,8 @@ documentation/logs.
 | `app.log_level`, `app.log_format` | `INFO`, `json` | Process logging |
 | `telegram.transport` | `polling` | `polling` or `webhook` |
 | `telegram.bot_token_env` | `TELEGRAM_BOT_TOKEN` | Secret indirection |
-| `telegram.allowed_user_ids/chat_ids` | empty | Enforced YAML numeric allowlists; empty permits all users/chats |
+| `telegram.allowed_user_ids/chat_ids` | empty | Enforced YAML numeric allowlists; an empty list permits all users/chats |
+| `telegram.allowed_usernames` | empty | Enforced YAML Telegram username allowlist; case-insensitive and `@` is optional |
 | `telegram.webhook_public_url` | empty | Required when webhook transport is chosen |
 | `telegram.webhook_secret_env` | `TELEGRAM_WEBHOOK_SECRET` | Webhook secret indirection |
 | `telegram.default_parse_mode` | `HTML` | Bot formatting |

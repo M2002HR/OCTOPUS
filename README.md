@@ -81,7 +81,7 @@ git submodule update --init --recursive
 cp .env.example .env
 chmod 600 .env
 # Fill secrets and host-specific values in .env.
-# Set telegram.allowed_user_ids/chat_ids in config/agent.yaml.
+# Set telegram.allowed_user_ids/chat_ids/usernames in config/agent.yaml.
 
 docker compose --profile agent config --quiet
 docker compose --profile agent build

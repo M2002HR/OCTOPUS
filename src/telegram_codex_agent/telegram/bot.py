@@ -118,11 +118,21 @@ class TelegramBotService:
     def _allowed(self, message: Message) -> bool:
         user_ids = self.settings.telegram.allowed_user_ids
         chat_ids = self.settings.telegram.allowed_chat_ids
+        usernames = self.settings.telegram.allowed_usernames
         user_allowed = not user_ids or (
             message.from_user is not None and message.from_user.id in user_ids
         )
         chat_allowed = not chat_ids or message.chat.id in chat_ids
-        return user_allowed and chat_allowed
+        username_allowed = not usernames or (
+            message.from_user is not None
+            and message.from_user.username is not None
+            and message.from_user.username.casefold() in usernames
+        )
+        return user_allowed and chat_allowed and username_allowed
+
+    @staticmethod
+    async def _reject_message(message: Message) -> None:
+        await message.answer("شما دسترسی ندارید.")
 
     @staticmethod
     def _main_keyboard() -> ReplyKeyboardMarkup:
@@ -174,12 +184,14 @@ class TelegramBotService:
         @self.router.message(Command("start"))
         async def start(message: Message) -> None:
             if not self._allowed(message):
+                await self._reject_message(message)
                 return
             await self._dispatch_input(message, "/home")
 
         @self.router.message(Command("help"))
         async def help_command(message: Message) -> None:
             if not self._allowed(message):
+                await self._reject_message(message)
                 return
             await self._dispatch_input(message, "/help")
 
@@ -188,13 +200,21 @@ class TelegramBotService:
             message = callback.message
             user_ids = self.settings.telegram.allowed_user_ids
             chat_ids = self.settings.telegram.allowed_chat_ids
+            usernames = self.settings.telegram.allowed_usernames
             allowed = (
                 isinstance(message, Message)
                 and (not user_ids or callback.from_user.id in user_ids)
                 and (not chat_ids or message.chat.id in chat_ids)
+                and (
+                    not usernames
+                    or (
+                        callback.from_user.username is not None
+                        and callback.from_user.username.casefold() in usernames
+                    )
+                )
             )
             if not allowed or not isinstance(message, Message):
-                await callback.answer("Not allowed", show_alert=True)
+                await callback.answer("شما دسترسی ندارید.", show_alert=True)
                 return
             await callback.answer()
             await self._dispatch_input(
@@ -210,6 +230,7 @@ class TelegramBotService:
                     "rejected unauthorized Telegram update",
                     extra={"telegram_user_id": message.from_user.id if message.from_user else None},
                 )
+                await self._reject_message(message)
                 return
             await self._dispatch_input(message)
 

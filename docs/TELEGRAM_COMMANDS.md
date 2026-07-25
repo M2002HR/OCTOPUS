@@ -124,9 +124,10 @@ workspace containment, file type, and Telegram upload size before delivery.
 
 ## Access boundaries
 
-- `telegram.allowed_user_ids` and `telegram.allowed_chat_ids` in `config/agent.yaml` are the
-  enforced Bot API numeric allowlists.
-- Empty allowlists are suitable only for a controlled personal development deployment.
+- `telegram.allowed_user_ids`, `telegram.allowed_chat_ids`, and
+  `telegram.allowed_usernames` in `config/agent.yaml` are enforced Bot API allowlists.
+- Each non-empty allowlist is required in addition to the others. A username allowlist rejects
+  users with no public username and receives case-insensitive `@username` matches.
 - Bot user/chat ownership scopes session, job, history, memory, and settings reads.
 - `VOICE_AGENT_ALLOWED_PEER_IDS` is a separate numeric Telethon call allowlist.
 - The second Telethon session is a test peer only; it must not own the primary session or run in

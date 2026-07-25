@@ -20,7 +20,7 @@ requirements. Evidence must come from tests or recorded live runs.
 
 - [x] Aiogram polling adapter and command registration
 - [x] Persistent/inline control-center keyboards
-- [x] Numeric user/chat allowlist support
+- [x] Numeric user/chat and username Bot API allowlists with explicit denial responses
 - [x] Text, voice/audio, photo/image, document, video metadata normalization
 - [x] Deterministic inbox paths, hashes, and Telegram artifact uploads
 - [x] Workspace discovery/registry and explicit selection
