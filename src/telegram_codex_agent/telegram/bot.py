@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
+    User,
 )
 
 from telegram_codex_agent.core.config import Settings
@@ -115,20 +117,21 @@ class TelegramBotService:
         self.dispatcher.include_router(self.router)
         self._install_routes()
 
-    def _allowed(self, message: Message) -> bool:
+    def _allowed_actor(self, user: User | None, chat_id: int) -> bool:
         user_ids = self.settings.telegram.allowed_user_ids
         chat_ids = self.settings.telegram.allowed_chat_ids
         usernames = self.settings.telegram.allowed_usernames
-        user_allowed = not user_ids or (
-            message.from_user is not None and message.from_user.id in user_ids
-        )
-        chat_allowed = not chat_ids or message.chat.id in chat_ids
+        user_allowed = not user_ids or (user is not None and user.id in user_ids)
+        chat_allowed = not chat_ids or chat_id in chat_ids
         username_allowed = not usernames or (
-            message.from_user is not None
-            and message.from_user.username is not None
-            and message.from_user.username.casefold() in usernames
+            user is not None
+            and user.username is not None
+            and user.username.casefold() in usernames
         )
         return user_allowed and chat_allowed and username_allowed
+
+    def _allowed(self, message: Message) -> bool:
+        return self._allowed_actor(message.from_user, message.chat.id)
 
     @staticmethod
     async def _reject_message(message: Message) -> None:
@@ -198,20 +201,9 @@ class TelegramBotService:
         @self.router.callback_query()
         async def handle_callback(callback: CallbackQuery) -> None:
             message = callback.message
-            user_ids = self.settings.telegram.allowed_user_ids
-            chat_ids = self.settings.telegram.allowed_chat_ids
-            usernames = self.settings.telegram.allowed_usernames
             allowed = (
                 isinstance(message, Message)
-                and (not user_ids or callback.from_user.id in user_ids)
-                and (not chat_ids or message.chat.id in chat_ids)
-                and (
-                    not usernames
-                    or (
-                        callback.from_user.username is not None
-                        and callback.from_user.username.casefold() in usernames
-                    )
-                )
+                and self._allowed_actor(callback.from_user, message.chat.id)
             )
             if not allowed or not isinstance(message, Message):
                 await callback.answer("شما دسترسی ندارید.", show_alert=True)
@@ -263,5 +255,17 @@ class TelegramBotService:
     async def run_polling(self) -> None:
         if self.bot is None:
             raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
-        await self.bot.set_my_commands(self._command_menu())
-        await self.dispatcher.start_polling(self.bot)
+        try:
+            while True:
+                try:
+                    await self.bot.set_my_commands(self._command_menu())
+                    break
+                except TelegramNetworkError as exc:
+                    logger.warning(
+                        "Telegram is unavailable while registering commands; retrying",
+                        extra={"error_type": type(exc).__name__},
+                    )
+                    await asyncio.sleep(10)
+            await self.dispatcher.start_polling(self.bot)
+        finally:
+            await self.bot.session.close()
